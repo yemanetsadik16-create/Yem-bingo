@@ -1,0 +1,109 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "User profile with Ethiopian phone, balance, and game stats",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string", "description": "Unique Google Auth user ID" },
+        "name": { "type": "string", "description": "Display name of player" },
+        "phone": { "type": "string", "description": "Ethiopian phone number format (+251...)" },
+        "avatarUrl": { "type": "string", "description": "Optional avatar URL" },
+        "city": { "type": "string", "description": "Player city in Ethiopia" },
+        "balanceEtb": { "type": "integer", "description": "Current wallet balance in ETB" },
+        "gamesPlayed": { "type": "integer", "description": "Total bingo games played" },
+        "gamesWon": { "type": "integer", "description": "Total bingo games won" },
+        "totalEarningsEtb": { "type": "integer", "description": "Lifetime winning earnings in ETB" },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Server timestamp of account creation" },
+        "updatedAt": { "type": "string", "format": "date-time", "description": "Server timestamp of last update" }
+      },
+      "required": ["userId", "name", "phone", "city", "balanceEtb", "gamesPlayed", "gamesWon", "totalEarningsEtb", "createdAt", "updatedAt"]
+    },
+    "Transaction": {
+      "title": "Transaction",
+      "description": "User deposit, withdrawal, bet stake, or win payout record",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Unique transaction ID" },
+        "userId": { "type": "string", "description": "Owning user UID" },
+        "type": { "type": "string", "description": "DEPOSIT, WITHDRAW, BET, or WIN", "enum": ["DEPOSIT", "WITHDRAW", "BET", "WIN"] },
+        "amountEtb": { "type": "integer", "description": "Amount in Ethiopian Birr" },
+        "status": { "type": "string", "description": "COMPLETED, PENDING, or FAILED", "enum": ["COMPLETED", "PENDING", "FAILED"] },
+        "paymentMethod": { "type": "string", "description": "Payment or wallet source", "enum": ["TELEBIRR", "CBE_BIRR", "GAME_WIN", "STAKE"] },
+        "reference": { "type": "string", "description": "Transaction reference code or receipt" },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Server timestamp of transaction" }
+      },
+      "required": ["id", "userId", "type", "amountEtb", "status", "paymentMethod", "reference", "createdAt"]
+    },
+    "RoomPlayer": {
+      "title": "RoomPlayer",
+      "description": "Live player joined into a specific bingo room",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string", "description": "Player UID" },
+        "name": { "type": "string", "description": "Player display name" },
+        "ticketNumber": { "type": "integer", "description": "Chosen ticket number" },
+        "joinedAt": { "type": "string", "format": "date-time", "description": "Timestamp when joined" }
+      },
+      "required": ["userId", "name", "ticketNumber", "joinedAt"]
+    },
+    "GameRoom": {
+      "title": "GameRoom",
+      "description": "Public Bingo room state with 80% prize, 20% house commission, synchronized 3-minute timer, and live caller balls",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Room identifier key" },
+        "name": { "type": "string", "description": "Display name of the room" },
+        "stakeEtb": { "type": "integer", "description": "Cost per card in ETB" },
+        "prizeEtb": { "type": "integer", "description": "80% winner prize in ETB" },
+        "houseCommissionEtb": { "type": "integer", "description": "20% house commission in ETB" },
+        "totalPoolEtb": { "type": "integer", "description": "Total pool in ETB" },
+        "currentPlayers": { "type": "integer", "description": "Active players joined" },
+        "countdownSeconds": { "type": "integer", "description": "Countdown timer seconds remaining (0-180)" },
+        "status": { "type": "string", "description": "Room game state", "enum": ["WAITING", "COUNTDOWN", "IN_PROGRESS", "FINISHED"] },
+        "calledNumbers": { "type": "array", "description": "List of ball numbers called so far" },
+        "latestBall": { "type": "integer", "description": "Most recently called ball number (1-75)" },
+        "winnerId": { "type": "string", "description": "Winner UID" },
+        "winnerName": { "type": "string", "description": "Winner display name" },
+        "updatedAt": { "type": "string", "format": "date-time", "description": "Last updated timestamp" }
+      },
+      "required": ["id", "name", "stakeEtb", "prizeEtb", "houseCommissionEtb", "totalPoolEtb", "currentPlayers", "countdownSeconds", "status", "updatedAt"]
+    },
+    "LeaderboardItem": {
+      "title": "LeaderboardItem",
+      "description": "Real tournament top winners entry",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string", "description": "Player UID" },
+        "name": { "type": "string", "description": "Player display name" },
+        "wonEtb": { "type": "integer", "description": "Total won amount in ETB" },
+        "gamesWon": { "type": "integer", "description": "Total wins" },
+        "city": { "type": "string", "description": "Player city" },
+        "updatedAt": { "type": "string", "format": "date-time", "description": "Timestamp of leaderboard record" }
+      },
+      "required": ["userId", "name", "wonEtb", "gamesWon", "city", "updatedAt"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/UserProfile" },
+      "description": "User profile collection isolated per authenticated user"
+    },
+    "/users/{userId}/transactions/{transactionId}": {
+      "schema": { "$ref": "#/entities/Transaction" },
+      "description": "Transaction logs isolated under user profile"
+    },
+    "/rooms/{roomId}": {
+      "schema": { "$ref": "#/entities/GameRoom" },
+      "description": "Shared live multiplayer bingo game rooms synchronized across all devices"
+    },
+    "/rooms/{roomId}/players/{userId}": {
+      "schema": { "$ref": "#/entities/RoomPlayer" },
+      "description": "Live players registered in this room"
+    },
+    "/leaderboard/{userId}": {
+      "schema": { "$ref": "#/entities/LeaderboardItem" },
+      "description": "Live real tournament leaderboard rankings"
+    }
+  }
+}

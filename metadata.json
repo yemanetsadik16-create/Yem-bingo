@@ -1,0 +1,6 @@
+{
+  "name": "Yem Bingo",
+  "description": "Ethiopia's #1 Live Multiplayer 75-Ball Bingo game with live betting rooms, 1-75 ball caller matrix, Telebirr and CBE Birr wallet, and tournaments.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

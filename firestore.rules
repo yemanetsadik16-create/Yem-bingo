@@ -1,0 +1,167 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Default deny catch-all
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() > 0 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isValidUserProfile(data) {
+      return data.userId is string && data.userId == request.auth.uid &&
+             data.name is string && data.name.size() >= 2 && data.name.size() <= 60 &&
+             data.phone is string && data.phone.size() >= 9 && data.phone.size() <= 20 &&
+             (!('avatarUrl' in data) || data.avatarUrl == null || (data.avatarUrl is string && data.avatarUrl.size() <= 500)) &&
+             data.city is string && data.city.size() <= 50 &&
+             data.balanceEtb is int && data.balanceEtb >= 0 &&
+             data.gamesPlayed is int && data.gamesPlayed >= 0 &&
+             data.gamesWon is int && data.gamesWon >= 0 &&
+             data.totalEarningsEtb is int && data.totalEarningsEtb >= 0;
+    }
+
+    function isValidTransaction(data) {
+      return data.id is string && isValidId(data.id) &&
+             data.userId is string && data.userId == request.auth.uid &&
+             data.type is string && data.type in ['DEPOSIT', 'WITHDRAW', 'BET', 'WIN'] &&
+             data.amountEtb is int && data.amountEtb >= 0 &&
+             data.status is string && data.status in ['COMPLETED', 'PENDING', 'FAILED'] &&
+             data.paymentMethod is string && data.paymentMethod in ['TELEBIRR', 'CBE_BIRR', 'GAME_WIN', 'STAKE'] &&
+             data.reference is string && data.reference.size() <= 100;
+    }
+
+    function isValidGameRoom(data) {
+      return data.id is string && isValidId(data.id) &&
+             data.name is string && data.name.size() <= 60 &&
+             data.stakeEtb is int && data.stakeEtb >= 0 &&
+             data.prizeEtb is int && data.prizeEtb >= 0 &&
+             data.houseCommissionEtb is int && data.houseCommissionEtb >= 0 &&
+             data.totalPoolEtb is int && data.totalPoolEtb >= 0 &&
+             data.currentPlayers is int && data.currentPlayers >= 0 &&
+             data.countdownSeconds is int && data.countdownSeconds >= 0 && data.countdownSeconds <= 180 &&
+             data.status is string && data.status in ['WAITING', 'COUNTDOWN', 'IN_PROGRESS', 'FINISHED'] &&
+             (!('calledNumbers' in data) || (data.calledNumbers is list && data.calledNumbers.size() <= 75)) &&
+             (!('latestBall' in data) || data.latestBall is int) &&
+             (!('winnerId' in data) || data.winnerId == null || (data.winnerId is string && data.winnerId.size() <= 128)) &&
+             (!('winnerName' in data) || data.winnerName == null || (data.winnerName is string && data.winnerName.size() <= 60)) &&
+             data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    function isValidRoomPlayer(data) {
+      return data.userId is string && data.userId == request.auth.uid &&
+             data.name is string && data.name.size() >= 2 && data.name.size() <= 60 &&
+             data.ticketNumber is int && data.ticketNumber >= 1 && data.ticketNumber <= 999 &&
+             data.joinedAt is timestamp && data.joinedAt <= request.time;
+    }
+
+    function isValidLeaderboard(data) {
+      return data.userId is string && data.userId == request.auth.uid &&
+             data.name is string && data.name.size() >= 2 && data.name.size() <= 60 &&
+             data.wonEtb is int && data.wonEtb >= 0 &&
+             data.gamesWon is int && data.gamesWon >= 0 &&
+             data.city is string && data.city.size() <= 50 &&
+             data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    // User Profile
+    match /users/{userId} {
+      allow get: if isSignedIn() && request.auth.uid == userId;
+      allow list: if false;
+
+      allow create: if isSignedIn() &&
+                       request.auth.uid == userId &&
+                       isValidId(userId) &&
+                       incoming().userId == request.auth.uid &&
+                       incoming().keys().hasAll(['userId', 'name', 'phone', 'city', 'balanceEtb', 'gamesPlayed', 'gamesWon', 'totalEarningsEtb', 'createdAt', 'updatedAt']) &&
+                       incoming().keys().hasOnly(['userId', 'name', 'phone', 'avatarUrl', 'city', 'balanceEtb', 'gamesPlayed', 'gamesWon', 'totalEarningsEtb', 'createdAt', 'updatedAt']) &&
+                       incoming().createdAt is timestamp && incoming().createdAt <= request.time &&
+                       incoming().updatedAt is timestamp && incoming().updatedAt <= request.time &&
+                       isValidUserProfile(incoming());
+
+      allow update: if isSignedIn() &&
+                       request.auth.uid == userId &&
+                       isValidId(userId) &&
+                       incoming().userId == existing().userId &&
+                       incoming().createdAt == existing().createdAt &&
+                       isValidUserProfile(incoming()) &&
+                       incoming().diff(existing()).affectedKeys().hasOnly(['name', 'phone', 'avatarUrl', 'city', 'balanceEtb', 'gamesPlayed', 'gamesWon', 'totalEarningsEtb', 'updatedAt']) &&
+                       incoming().updatedAt is timestamp && incoming().updatedAt <= request.time;
+
+      allow delete: if isSignedIn() && request.auth.uid == userId;
+
+      // Transactions subcollection
+      match /transactions/{transactionId} {
+        allow get, list: if isSignedIn() && request.auth.uid == userId;
+
+        allow create: if isSignedIn() &&
+                         request.auth.uid == userId &&
+                         isValidId(transactionId) &&
+                         incoming().userId == request.auth.uid &&
+                         incoming().keys().hasAll(['id', 'userId', 'type', 'amountEtb', 'status', 'paymentMethod', 'reference', 'createdAt']) &&
+                         incoming().keys().hasOnly(['id', 'userId', 'type', 'amountEtb', 'status', 'paymentMethod', 'reference', 'createdAt']) &&
+                         incoming().createdAt is timestamp && incoming().createdAt <= request.time &&
+                         isValidTransaction(incoming());
+
+        allow update, delete: if false;
+      }
+    }
+
+    // Live Game Rooms (Synchronized across all multiplayer devices)
+    match /rooms/{roomId} {
+      allow get, list: if isSignedIn();
+
+      allow create, update: if isSignedIn() &&
+                               isValidId(roomId) &&
+                               isValidGameRoom(incoming());
+
+      allow delete: if false;
+
+      // Active Players in this room
+      match /players/{playerId} {
+        allow get, list: if isSignedIn();
+
+        allow create: if isSignedIn() &&
+                         request.auth.uid == playerId &&
+                         isValidId(playerId) &&
+                         incoming().userId == request.auth.uid &&
+                         isValidRoomPlayer(incoming());
+
+        allow update: if isSignedIn() &&
+                         request.auth.uid == playerId &&
+                         isValidId(playerId) &&
+                         incoming().userId == request.auth.uid &&
+                         isValidRoomPlayer(incoming());
+
+        allow delete: if isSignedIn() && request.auth.uid == playerId;
+      }
+    }
+
+    // Leaderboard
+    match /leaderboard/{userId} {
+      allow get, list: if isSignedIn();
+
+      allow create, update: if isSignedIn() &&
+                               request.auth.uid == userId &&
+                               isValidId(userId) &&
+                               incoming().userId == request.auth.uid &&
+                               isValidLeaderboard(incoming());
+
+      allow delete: if isSignedIn() && request.auth.uid == userId;
+    }
+  }
+}

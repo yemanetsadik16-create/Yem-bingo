@@ -1,0 +1,1289 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>Yem Bingo - Ethiopia's #1 Live Multiplayer Bingo</title>
+  
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Playfair+Display:wght@700;900&display=swap" rel="stylesheet">
+    
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+
+  <style>
+    :root {
+      --bg-dark: #06191E;
+      --bg-surface: #0A2229;
+      --bg-card: #0F2D36;
+      --bg-card-elevated: #133844;
+      --border-color: #1A4755;
+
+      --gold-primary: #FFC107;
+      --gold-light: #FFE082;
+      --gold-dark: #FFA000;
+
+      --mint-primary: #20C997;
+      --mint-light: #6EE7B7;
+      --mint-dark: #0E9F6E;
+
+      --orange-dynamic: #FF5722;
+      --orange-light: #FF8A65;
+      --orange-dark: #E64A19;
+      
+      --text-primary: #FFFFFF;
+      --text-secondary: #94A3B8;
+      --text-tertiary: #64748B;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      -webkit-tap-highlight-color: transparent;
+      user-select: none;
+    }
+
+    body {
+      background-color: var(--bg-dark);
+      color: var(--text-primary);
+      font-family: 'Plus Jakarta Sans', sans-serif;
+      min-height: 100vh;
+      display: flex;
+      justify-content: center;
+      background-image: 
+        radial-gradient(circle at 15% 15%, rgba(32, 201, 151, 0.08) 0%, transparent 40%),
+        radial-gradient(circle at 85% 85%, rgba(255, 193, 7, 0.08) 0%, transparent 40%);
+    }
+
+    #app-container {
+      width: 100%;
+      max-width: 480px;
+      min-height: 100vh;
+      background: var(--bg-dark);
+      position: relative;
+      padding-bottom: 84px;
+      display: flex;
+      flex-direction: column;
+      box-shadow: 0 0 50px rgba(0,0,0,0.7);
+    }
+
+    /* Top Wallet & Jackpot Header */
+    .top-header {
+      background: linear-gradient(180deg, var(--bg-card) 0%, var(--bg-surface) 100%);
+      border-bottom: 1px solid var(--border-color);
+      padding: 14px 16px;
+      position: sticky;
+      top: 0;
+      z-index: 40;
+    }
+
+    .header-top-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .brand-logo {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .brand-logo .ball-icon {
+      width: 32px;
+      height: 32px;
+      border-radius: 50%;
+      background: radial-gradient(circle at 35% 35%, var(--gold-light), var(--gold-dark));
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 800;
+      color: var(--bg-dark);
+      font-size: 14px;
+      box-shadow: 0 2px 10px rgba(255, 193, 7, 0.4);
+    }
+
+    .brand-name {
+      font-family: 'Playfair Display', serif;
+      font-size: 18px;
+      font-weight: 900;
+      letter-spacing: 0.5px;
+      background: linear-gradient(135deg, #FFFFFF, var(--gold-light));
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+
+    .wallet-chip {
+      background: var(--bg-dark);
+      border: 1px solid var(--mint-dark);
+      border-radius: 20px;
+      padding: 6px 12px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      cursor: pointer;
+      box-shadow: 0 0 10px rgba(32, 201, 151, 0.15);
+    }
+
+    .wallet-chip span {
+      font-weight: 800;
+      color: var(--mint-light);
+      font-size: 13px;
+    }
+
+    .plus-btn {
+      width: 20px;
+      height: 20px;
+      border-radius: 50%;
+      background: var(--orange-dynamic);
+      color: #fff;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: bold;
+      font-size: 14px;
+    }
+
+    /* Jackpot & Draw Bar */
+    .jackpot-banner {
+      background: rgba(10, 34, 41, 0.8);
+      border: 1px solid var(--border-color);
+      border-radius: 12px;
+      margin-top: 10px;
+      padding: 10px 12px;
+    }
+
+    .jackpot-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 12px;
+    }
+
+    .jackpot-title {
+      color: var(--gold-primary);
+      font-weight: 700;
+      letter-spacing: 0.5px;
+    }
+
+    .jackpot-countdown {
+      color: var(--mint-light);
+      font-weight: 700;
+      background: rgba(32, 201, 151, 0.15);
+      padding: 2px 8px;
+      border-radius: 6px;
+      font-size: 11px;
+    }
+
+    .progress-bar-bg {
+      width: 100%;
+      height: 8px;
+      background: var(--bg-dark);
+      border-radius: 4px;
+      margin-top: 8px;
+      overflow: hidden;
+      border: 1px solid var(--border-color);
+    }
+
+    .progress-bar-fill {
+      height: 100%;
+      width: 86.4%;
+      background: linear-gradient(90deg, var(--gold-dark), var(--orange-dynamic));
+      border-radius: 4px;
+      transition: width 0.5s ease;
+    }
+
+    /* Common Card Styling */
+    .app-card {
+      background: var(--bg-card-elevated);
+      border: 1px solid var(--border-color);
+      border-radius: 16px;
+      padding: 14px;
+      margin: 10px 14px;
+    }
+
+    .section-title {
+      font-size: 13px;
+      font-weight: 800;
+      color: var(--gold-primary);
+      letter-spacing: 1px;
+      text-transform: uppercase;
+      margin: 14px 16px 4px 16px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    /* Free Draw Banner */
+    .free-draw-banner {
+      border: 1px solid rgba(32, 201, 151, 0.4);
+      background: linear-gradient(135deg, rgba(15, 45, 54, 0.9), rgba(19, 56, 68, 0.9));
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    /* Room Cards */
+    .room-card {
+      background: var(--bg-card-elevated);
+      border: 1px solid var(--border-color);
+      border-radius: 16px;
+      padding: 14px;
+      margin: 8px 14px;
+      cursor: pointer;
+      transition: transform 0.15s ease, border-color 0.2s ease;
+    }
+    .room-card:active {
+      transform: scale(0.98);
+    }
+
+    .room-card-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .room-badge {
+      width: 38px;
+      height: 38px;
+      border-radius: 10px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 900;
+      font-size: 16px;
+      color: var(--bg-dark);
+    }
+
+    .room-stats-row {
+      background: var(--bg-dark);
+      border-radius: 10px;
+      padding: 8px 12px;
+      margin: 10px 0;
+      display: flex;
+      justify-content: space-between;
+      font-size: 12px;
+    }
+
+    .btn-orange {
+      background: var(--orange-dynamic);
+      color: white;
+      border: none;
+      border-radius: 10px;
+      padding: 8px 16px;
+      font-weight: 800;
+      font-size: 12px;
+      letter-spacing: 0.5px;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      transition: background 0.2s;
+    }
+    .btn-orange:hover {
+      background: var(--orange-dark);
+    }
+
+    /* Ticket Selection Screen */
+    .ticket-chips-scroll {
+      display: flex;
+      gap: 8px;
+      overflow-x: auto;
+      padding: 6px 2px;
+      scrollbar-width: none;
+    }
+    .ticket-chips-scroll::-webkit-scrollbar { display: none; }
+
+    .ticket-chip {
+      min-width: 58px;
+      height: 36px;
+      background: var(--bg-surface);
+      border: 1px solid var(--border-color);
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 12px;
+      font-weight: 700;
+      color: var(--text-secondary);
+      cursor: pointer;
+    }
+    .ticket-chip.selected {
+      background: linear-gradient(135deg, var(--gold-primary), var(--gold-dark));
+      color: var(--bg-dark);
+      border-color: white;
+      font-weight: 900;
+    }
+
+    /* 5x5 Bingo Card Grid */
+    .bingo-card {
+      background: var(--bg-card);
+      border: 1px solid var(--gold-primary);
+      border-radius: 18px;
+      padding: 10px;
+      margin: 10px 14px;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+    }
+
+    .bingo-header-row {
+      display: grid;
+      grid-template-columns: repeat(5, 1fr);
+      gap: 4px;
+      background: linear-gradient(90deg, #EF4444, #3B82F6, var(--gold-primary), var(--mint-primary), #A855F7);
+      border-radius: 8px;
+      padding: 6px 0;
+      margin-bottom: 6px;
+    }
+    .bingo-header-row div {
+      text-align: center;
+      font-weight: 900;
+      color: white;
+      font-size: 15px;
+    }
+
+    .bingo-grid {
+      display: grid;
+      grid-template-columns: repeat(5, 1fr);
+      gap: 4px;
+    }
+
+    .bingo-cell {
+      aspect-ratio: 1;
+      background: var(--bg-surface);
+      border: 1px solid var(--border-color);
+      border-radius: 8px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      font-size: 14px;
+      font-weight: 800;
+      color: var(--text-primary);
+      cursor: pointer;
+      position: relative;
+      transition: all 0.2s;
+    }
+    .bingo-cell.marked {
+      background: radial-gradient(circle, var(--mint-primary), var(--mint-dark));
+      color: var(--bg-dark);
+      border-color: var(--mint-light);
+    }
+    .bingo-cell.winning {
+      background: radial-gradient(circle, var(--gold-primary), var(--orange-dynamic));
+      color: var(--bg-dark);
+      border-color: #fff;
+      animation: pulse 1s infinite alternate;
+    }
+    .bingo-cell.free-space {
+      background: radial-gradient(circle, var(--gold-primary), var(--gold-dark));
+      color: var(--bg-dark);
+      border-color: var(--gold-light);
+    }
+
+    @keyframes pulse {
+      0% { transform: scale(0.96); }
+      100% { transform: scale(1.04); }
+    }
+
+    /* Live 1-100 Matrix */
+    .matrix-grid {
+      display: grid;
+      grid-template-columns: repeat(10, 1fr);
+      gap: 3px;
+      margin-top: 6px;
+    }
+    .matrix-cell {
+      aspect-ratio: 1;
+      background: var(--bg-dark);
+      border: 0.5px solid rgba(26, 71, 85, 0.5);
+      border-radius: 3px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 8px;
+      font-weight: 700;
+      color: var(--text-tertiary);
+    }
+    .matrix-cell.called {
+      background: var(--mint-dark);
+      color: #fff;
+      border-color: var(--mint-primary);
+    }
+    .matrix-cell.latest {
+      background: var(--gold-primary);
+      color: var(--bg-dark);
+      border-color: #fff;
+      font-weight: 900;
+    }
+
+    /* Leaderboard Tab */
+    .filter-tabs {
+      display: flex;
+      gap: 8px;
+      padding: 0 14px;
+      overflow-x: auto;
+      scrollbar-width: none;
+      margin: 8px 0;
+    }
+    .filter-tab {
+      background: var(--bg-card);
+      border: 1px solid var(--border-color);
+      border-radius: 12px;
+      padding: 8px 14px;
+      font-size: 11px;
+      font-weight: 700;
+      color: var(--text-secondary);
+      cursor: pointer;
+      white-space: nowrap;
+    }
+    .filter-tab.active {
+      background: var(--bg-surface);
+      border-color: var(--gold-primary);
+      color: var(--gold-primary);
+    }
+
+    .tournament-banner {
+      background: linear-gradient(135deg, var(--bg-card-elevated), var(--bg-card));
+      border: 1px solid var(--gold-primary);
+      border-radius: 18px;
+      padding: 14px;
+      margin: 8px 14px;
+    }
+
+    .timer-boxes {
+      display: flex;
+      gap: 4px;
+      align-items: center;
+    }
+    .timer-box {
+      background: var(--bg-surface);
+      border: 1px solid var(--border-color);
+      border-radius: 4px;
+      padding: 3px 6px;
+      font-size: 10px;
+      font-weight: 800;
+      color: var(--text-primary);
+    }
+
+    .rank-card {
+      background: var(--bg-card-elevated);
+      border: 1px solid var(--border-color);
+      border-radius: 14px;
+      padding: 10px 14px;
+      margin: 6px 14px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .rank-card.top1 { border-color: var(--gold-primary); }
+    .rank-card.top2 { border-color: #94A3B8; }
+    .rank-card.top3 { border-color: #CD7F32; }
+
+    /* Profile Tab */
+    .profile-banner {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+    }
+    .avatar-circle {
+      width: 56px;
+      height: 56px;
+      border-radius: 50%;
+      background: radial-gradient(circle, var(--gold-primary), var(--orange-dynamic));
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 26px;
+      border: 2px solid var(--gold-primary);
+    }
+
+    .stats-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+      margin: 10px 14px;
+    }
+    .stat-card {
+      background: var(--bg-card-elevated);
+      border: 1px solid var(--border-color);
+      border-radius: 14px;
+      padding: 12px;
+    }
+
+    /* Bottom Navigation Bar */
+    .bottom-nav {
+      position: fixed;
+      bottom: 0;
+      width: 100%;
+      max-width: 480px;
+      height: 68px;
+      background: rgba(10, 34, 41, 0.95);
+      backdrop-filter: blur(10px);
+      border-top: 1px solid var(--border-color);
+      display: flex;
+      justify-content: space-around;
+      align-items: center;
+      z-index: 50;
+    }
+
+    .nav-item {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 4px;
+      color: var(--text-secondary);
+      font-size: 11px;
+      font-weight: 700;
+      cursor: pointer;
+      padding: 6px 16px;
+      border-radius: 12px;
+      transition: all 0.2s;
+    }
+    .nav-item.active {
+      color: var(--gold-primary);
+    }
+    .nav-item svg {
+      width: 22px;
+      height: 22px;
+      fill: currentColor;
+    }
+
+    /* Modal Overlay */
+    .modal-overlay {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: rgba(0,0,0,0.75);
+      backdrop-filter: blur(4px);
+      display: none;
+      justify-content: center;
+      align-items: center;
+      z-index: 100;
+      padding: 16px;
+    }
+    .modal-overlay.open {
+      display: flex;
+    }
+    .modal-box {
+      background: var(--bg-card-elevated);
+      border: 1px solid var(--gold-primary);
+      border-radius: 20px;
+      width: 100%;
+      max-width: 380px;
+      padding: 20px;
+      animation: zoomIn 0.2s ease-out;
+    }
+    @keyframes zoomIn {
+      from { transform: scale(0.9); opacity: 0; }
+      to { transform: scale(1); opacity: 1; }
+    }
+  </style>
+</head>
+<body>
+
+<div id="app-container">
+  <!-- Top Live Header -->
+  <header class="top-header">
+    <div class="header-top-row">
+      <div class="brand-logo">
+        <div class="ball-icon">77</div>
+        <div>
+          <div class="brand-name">YEM BINGO</div>
+          <div style="font-size: 9px; color: var(--mint-primary); font-weight: bold; letter-spacing: 0.5px;">ETHIOPIA'S #1 LIVE MULTIPLAYER</div>
+        </div>
+      </div>
+      <div class="wallet-chip" onclick="openDepositModal()">
+        <span><span id="wallet-balance">250</span> ETB</span>
+        <div class="plus-btn">+</div>
+      </div>
+    </div>
+
+    <!-- Mega Draw Countdown & Jackpot progress -->
+    <div class="jackpot-banner">
+      <div class="jackpot-row">
+        <div>
+          <span class="jackpot-title">👑 MEGA JACKPOT:</span>
+          <span style="color: white; font-weight: 800; font-size: 13px;">432 / 500 ETB</span>
+        </div>
+        <div class="jackpot-countdown" id="jackpot-timer">Next Draw: 04:18</div>
+      </div>
+      <div class="progress-bar-bg">
+        <div class="progress-bar-fill"></div>
+      </div>
+    </div>
+  </header>
+
+  <!-- VIEW 1: PLAY LOBBY & GAMEPLAY -->
+  <main id="view-play">
+    <!-- Free Tier Banner -->
+    <div class="app-card free-draw-banner">
+      <div style="display: flex; align-items: center; gap: 10px;">
+        <div style="font-size: 26px;">🎁</div>
+        <div>
+          <div style="font-weight: 800; color: var(--mint-light); font-size: 12px;">FREE TIER DRAW ACTIVE</div>
+          <div style="font-size: 11px; color: var(--text-secondary);">Claim bonus ticket • Win up to 500 ETB!</div>
+        </div>
+      </div>
+      <button class="btn-orange" onclick="claimDailyReward()">Claim</button>
+    </div>
+
+    <!-- Lobby Section (Default) -->
+    <div id="lobby-section">
+      <div class="section-title">
+        <span>Live Betting Rooms</span>
+        <span style="color: var(--mint-primary); font-size: 11px;">● 428 Live Players</span>
+      </div>
+
+      <!-- Room Cards -->
+      <div class="room-card" onclick="enterTicketSelection('Standard Room', 20, 1500)">
+        <div class="room-card-header">
+          <div style="display: flex; align-items: center; gap: 10px;">
+            <div class="room-badge" style="background: var(--gold-primary);">20</div>
+            <div>
+              <div style="font-weight: 800; font-size: 14px;">Standard Room</div>
+              <div style="font-size: 11px; color: var(--gold-light);">Stake: 20 ETB / Ticket</div>
+            </div>
+          </div>
+          <div style="color: var(--gold-primary); font-size: 11px; font-weight: bold; background: var(--bg-surface); padding: 4px 8px; border-radius: 6px;">27s left</div>
+        </div>
+        <div class="room-stats-row">
+          <span style="color: var(--text-secondary);">👥 45/60 Players</span>
+          <span style="color: var(--gold-primary); font-weight: 800;">Prize: 1,500 ETB</span>
+        </div>
+        <button class="btn-orange" style="width: 100%; justify-content: center;">JOIN ROOM</button>
+      </div>
+
+      <div class="room-card" onclick="enterTicketSelection('High Roller Suite', 50, 4200)">
+        <div class="room-card-header">
+          <div style="display: flex; align-items: center; gap: 10px;">
+            <div class="room-badge" style="background: var(--orange-dynamic);">50</div>
+            <div>
+              <div style="font-weight: 800; font-size: 14px;">High Roller Suite</div>
+              <div style="font-size: 11px; color: var(--orange-light);">Stake: 50 ETB / Ticket</div>
+            </div>
+          </div>
+          <div style="color: var(--orange-dynamic); font-size: 11px; font-weight: bold; background: var(--bg-surface); padding: 4px 8px; border-radius: 6px;">12s left</div>
+        </div>
+        <div class="room-stats-row">
+          <span style="color: var(--text-secondary);">👥 58/60 Players</span>
+          <span style="color: var(--gold-primary); font-weight: 800;">Prize: 4,200 ETB</span>
+        </div>
+        <button class="btn-orange" style="width: 100%; justify-content: center;">JOIN ROOM</button>
+      </div>
+
+      <div class="room-card" onclick="enterTicketSelection('Mini Starter', 10, 600)">
+        <div class="room-card-header">
+          <div style="display: flex; align-items: center; gap: 10px;">
+            <div class="room-badge" style="background: var(--mint-primary);">10</div>
+            <div>
+              <div style="font-weight: 800; font-size: 14px;">Mini Starter</div>
+              <div style="font-size: 11px; color: var(--mint-light);">Stake: 10 ETB / Ticket</div>
+            </div>
+          </div>
+          <div style="color: var(--mint-primary); font-size: 11px; font-weight: bold; background: var(--bg-surface); padding: 4px 8px; border-radius: 6px;">waiting</div>
+        </div>
+        <div class="room-stats-row">
+          <span style="color: var(--text-secondary);">👥 19/30 Players</span>
+          <span style="color: var(--gold-primary); font-weight: 800;">Prize: 600 ETB</span>
+        </div>
+        <button class="btn-orange" style="width: 100%; justify-content: center;">JOIN ROOM</button>
+      </div>
+    </div>
+
+    <!-- Ticket Selection Section (Sub-view) -->
+    <div id="ticket-section" style="display: none;">
+      <div class="app-card" style="padding: 10px 14px;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+          <button onclick="backToLobby()" style="background:none; border:none; color:var(--text-secondary); cursor:pointer; font-weight:bold;">← Lobby</button>
+          <div style="font-weight: bold; color: var(--gold-primary); font-size: 13px;" id="selected-room-title">Standard Room (20 ETB)</div>
+          <div style="font-size: 11px; color: var(--mint-primary); font-weight: bold;">Selected #<span id="ticket-number-label">77</span></div>
+        </div>
+
+        <!-- Ticket scroll -->
+        <div class="ticket-chips-scroll" id="ticket-chips-container">
+          <!-- Dynamic ticket chips generated by JS -->
+        </div>
+      </div>
+
+      <!-- Preview 5x5 Card -->
+      <div class="bingo-card">
+        <div class="bingo-header-row">
+          <div>B</div><div>I</div><div>N</div><div>G</div><div>O</div>
+        </div>
+        <div class="bingo-grid" id="preview-bingo-grid">
+          <!-- Dynamic 5x5 cells -->
+        </div>
+      </div>
+
+      <!-- Actions -->
+      <div style="display: flex; gap: 8px; padding: 0 14px;">
+        <button onclick="generateRandomCard()" style="flex: 1; height: 42px; background: var(--bg-card); border: 1px solid var(--gold-primary); color: var(--gold-primary); border-radius: 10px; font-weight: bold; cursor: pointer;">↻ Refresh Card</button>
+        <button onclick="startLiveGame()" class="btn-orange" style="flex: 2; height: 42px; justify-content: center; font-size: 13px;">▶ START GAME</button>
+      </div>
+    </div>
+
+    <!-- Active Live Gameplay Section (Sub-view) -->
+    <div id="gameplay-section" style="display: none;">
+      <!-- Caller Spotlight Strip -->
+      <div class="app-card" style="display: flex; align-items: center; justify-content: space-between; padding: 12px;">
+        <div style="display: flex; align-items: center; gap: 12px;">
+          <div id="caller-ball" style="width: 54px; height: 54px; border-radius: 50%; background: radial-gradient(circle at 30% 30%, var(--gold-light), var(--orange-dynamic)); display: flex; align-items: center; justify-content: center; font-weight: 900; font-size: 22px; color: var(--bg-dark); box-shadow: 0 0 15px rgba(255, 193, 7, 0.5);">--</div>
+          <div>
+            <div style="font-weight: 800; font-size: 13px; color: var(--gold-primary);" id="caller-status-text">CALLING BALLS...</div>
+            <div style="font-size: 11px; color: var(--text-secondary);"><span id="called-count">0</span>/100 Numbers Called</div>
+          </div>
+        </div>
+        <button onclick="toggleAutoDaub()" id="autodaub-btn" style="background: rgba(32, 201, 151, 0.2); border: 1px solid var(--mint-primary); color: var(--mint-light); border-radius: 8px; padding: 6px 10px; font-size: 10px; font-weight: bold; cursor: pointer;">Auto-Daub: ON</button>
+      </div>
+
+      <!-- Active Interactive Bingo Card -->
+      <div class="bingo-card">
+        <div class="bingo-header-row">
+          <div>B</div><div>I</div><div>N</div><div>G</div><div>O</div>
+        </div>
+        <div class="bingo-grid" id="active-bingo-grid">
+          <!-- Active cells with daub click handlers -->
+        </div>
+      </div>
+
+      <!-- 1-100 Matrix -->
+      <div class="app-card">
+        <div style="display: flex; justify-content: space-between; font-size: 11px; font-weight: bold; color: var(--gold-primary);">
+          <span>LIVE 1–100 NUMBERS MATRIX</span>
+          <span style="color: var(--mint-primary);">Updated Live</span>
+        </div>
+        <div class="matrix-grid" id="matrix-100-grid">
+          <!-- 100 cells -->
+        </div>
+      </div>
+
+      <div style="padding: 0 14px; margin-bottom: 20px;">
+        <button onclick="leaveGame()" class="btn-orange" style="width: 100%; height: 44px; justify-content: center; background: var(--bg-card); border: 1px solid var(--border-color); color: var(--text-secondary);">← EXIT ROUND</button>
+      </div>
+    </div>
+  </main>
+
+  <!-- VIEW 2: TOURNAMENT LEADERBOARD -->
+  <main id="view-leaderboard" style="display: none;">
+    <div class="filter-tabs">
+      <div class="filter-tab active" onclick="setLeaderboardTab(this, 'enkutatash')">👑 Enkutatash Grand</div>
+      <div class="filter-tab" onclick="setLeaderboardTab(this, 'daily')">⭐ Daily Top 10</div>
+      <div class="filter-tab" onclick="setLeaderboardTab(this, 'weekly')">🏆 Weekly League</div>
+      <div class="filter-tab" onclick="setLeaderboardTab(this, 'monthly')">💎 Monthly VIP</div>
+    </div>
+
+    <!-- Grand Prize Banner -->
+    <div class="tournament-banner">
+      <div style="display: flex; justify-content: space-between; align-items: center;">
+        <div>
+          <div style="font-size: 11px; color: var(--text-secondary); font-weight: bold;">GRAND PRIZE POOL</div>
+          <div style="font-size: 22px; font-weight: 900; color: var(--gold-primary);">100,000 ETB</div>
+        </div>
+        <div class="timer-boxes">
+          <div class="timer-box">03d</div>:
+          <div class="timer-box">14h</div>:
+          <div class="timer-box">22m</div>:
+          <div class="timer-box" id="sec-timer">48s</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="section-title">
+      <span>TOP RANKINGS</span>
+      <span style="color: var(--mint-primary); font-size: 11px;">Live Verified</span>
+    </div>
+
+    <!-- Ranked Cards -->
+    <div class="rank-card top1">
+      <div style="display: flex; align-items: center; gap: 10px;">
+        <div style="font-size: 22px;">👑</div>
+        <div>
+          <div style="font-weight: 800; font-size: 13px; color: var(--gold-primary);">Yemane T. (YOU)</div>
+          <div style="font-size: 10px; color: var(--text-secondary);">2519****425 • 42 Wins</div>
+        </div>
+      </div>
+      <div style="text-align: right;">
+        <div style="font-weight: 900; color: var(--gold-primary); font-size: 14px;">4,000 ETB</div>
+        <div style="font-size: 9px; color: var(--mint-primary);">Rank #1</div>
+      </div>
+    </div>
+
+    <div class="rank-card top2">
+      <div style="display: flex; align-items: center; gap: 10px;">
+        <div style="font-size: 20px;">🥈</div>
+        <div>
+          <div style="font-weight: 800; font-size: 13px;">Tewodros B.</div>
+          <div style="font-size: 10px; color: var(--text-secondary);">2519****112 • 38 Wins</div>
+        </div>
+      </div>
+      <div style="text-align: right;">
+        <div style="font-weight: 900; color: #E2E8F0; font-size: 14px;">2,500 ETB</div>
+        <div style="font-size: 9px; color: var(--text-secondary);">Rank #2</div>
+      </div>
+    </div>
+
+    <div class="rank-card top3">
+      <div style="display: flex; align-items: center; gap: 10px;">
+        <div style="font-size: 20px;">🥉</div>
+        <div>
+          <div style="font-weight: 800; font-size: 13px;">Almaz G.</div>
+          <div style="font-size: 10px; color: var(--text-secondary);">2519****884 • 31 Wins</div>
+        </div>
+      </div>
+      <div style="text-align: right;">
+        <div style="font-weight: 900; color: #CD7F32; font-size: 14px;">1,800 ETB</div>
+        <div style="font-size: 9px; color: var(--text-secondary);">Rank #3</div>
+      </div>
+    </div>
+
+    <div class="rank-card">
+      <div style="display: flex; align-items: center; gap: 10px;">
+        <div style="font-weight: bold; color: var(--text-secondary); width: 24px; text-align: center;">#4</div>
+        <div>
+          <div style="font-weight: 800; font-size: 13px;">Henok T.</div>
+          <div style="font-size: 10px; color: var(--text-secondary);">2519****603 • 25 Wins</div>
+        </div>
+      </div>
+      <div style="text-align: right;">
+        <div style="font-weight: 900; color: var(--mint-light); font-size: 13px;">1,200 ETB</div>
+        <div style="font-size: 9px; color: var(--text-secondary);">Rank #4</div>
+      </div>
+    </div>
+  </main>
+
+  <!-- VIEW 3: PROFILE & WALLET -->
+  <main id="view-profile" style="display: none;">
+    <div class="app-card">
+      <div class="profile-banner">
+        <div class="avatar-circle">🦁</div>
+        <div>
+          <div style="display: flex; align-items: center; gap: 6px;">
+            <span style="font-weight: 900; font-size: 16px;">Yemane T.</span>
+            <span style="background: var(--gold-primary); color: var(--bg-dark); font-size: 9px; font-weight: 900; padding: 2px 6px; border-radius: 4px;">VIP 3</span>
+          </div>
+          <div style="font-size: 11px; color: var(--text-secondary);">+2519****425 • Addis Ababa</div>
+          <div style="font-size: 11px; color: var(--mint-primary); font-weight: bold;">Verified Player</div>
+        </div>
+      </div>
+
+      <div style="margin-top: 14px; background: var(--bg-dark); border-radius: 12px; padding: 12px; display: flex; justify-content: space-between; align-items: center;">
+        <div>
+          <div style="font-size: 10px; color: var(--text-secondary); font-weight: bold;">CURRENT BALANCE</div>
+          <div style="font-size: 20px; font-weight: 900; color: var(--gold-primary);"><span id="profile-balance">250</span> ETB</div>
+        </div>
+        <div style="display: flex; gap: 8px;">
+          <button onclick="openDepositModal()" class="btn-orange">Deposit</button>
+          <button onclick="openWithdrawModal()" style="background: transparent; border: 1px solid var(--mint-primary); color: var(--mint-primary); border-radius: 10px; padding: 8px 12px; font-weight: bold; font-size: 12px; cursor: pointer;">Cashout</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Stats Grid -->
+    <div class="stats-grid">
+      <div class="stat-card">
+        <div style="font-size: 10px; color: var(--text-secondary);">Games Played</div>
+        <div style="font-size: 18px; font-weight: 900; color: var(--gold-primary); margin-top: 4px;">128</div>
+      </div>
+      <div class="stat-card">
+        <div style="font-size: 10px; color: var(--text-secondary);">Total Winnings</div>
+        <div style="font-size: 18px; font-weight: 900; color: var(--mint-light); margin-top: 4px;">4,850 ETB</div>
+      </div>
+      <div class="stat-card">
+        <div style="font-size: 10px; color: var(--text-secondary);">Win Rate</div>
+        <div style="font-size: 18px; font-weight: 900; color: #00E5FF; margin-top: 4px;">32.8%</div>
+      </div>
+      <div class="stat-card">
+        <div style="font-size: 10px; color: var(--text-secondary);">Daily Streak</div>
+        <div style="font-size: 18px; font-weight: 900; color: var(--orange-dynamic); margin-top: 4px;">5 Days 🔥</div>
+      </div>
+    </div>
+
+    <!-- Referral & Invite -->
+    <div class="app-card" style="border-color: rgba(32, 201, 151, 0.4);">
+      <div style="font-weight: 800; color: var(--mint-light); font-size: 13px;">REFER FRIENDS & GET 50 ETB</div>
+      <div style="font-size: 11px; color: var(--text-secondary); margin: 4px 0 10px 0;">Share your promo code with friends to receive bonus ETB instantly.</div>
+      <div style="background: var(--bg-dark); border: 1px dashed var(--gold-primary); border-radius: 8px; padding: 8px 12px; display: flex; justify-content: space-between; align-items: center;">
+        <span style="font-weight: 900; color: var(--gold-primary); letter-spacing: 1px;">YEM-Yemane-77</span>
+        <span style="font-size: 10px; color: var(--orange-dynamic); font-weight: bold; cursor: pointer;" onclick="alert('Promo code copied!')">COPY</span>
+      </div>
+    </div>
+  </main>
+
+  <!-- Bottom Navigation Bar -->
+  <nav class="bottom-nav">
+    <div class="nav-item active" id="nav-play" onclick="switchNavTab('play')">
+      <svg viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 14.5v-9l6 4.5-6 4.5z"/></svg>
+      <span>Play</span>
+    </div>
+    <div class="nav-item" id="nav-leaderboard" onclick="switchNavTab('leaderboard')">
+      <svg viewBox="0 0 24 24"><path d="M19 5h-2V3H7v2H5c-1.1 0-2 .9-2 2v1c0 2.55 1.92 4.63 4.39 4.94.63 1.5 1.98 2.63 3.61 2.96V19H7v2h10v-2h-4v-3.1c1.63-.33 2.98-1.46 3.61-2.96C19.08 12.63 21 10.55 21 8V7c0-1.1-.9-2-2-2zM5 8V7h2v3.82C5.84 10.4 5 9.3 5 8zm14 0c0 1.3-.84 2.4-2 2.82V7h2v1z"/></svg>
+      <span>Tournament</span>
+    </div>
+    <div class="nav-item" id="nav-profile" onclick="switchNavTab('profile')">
+      <svg viewBox="0 0 24 24"><path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/></svg>
+      <span>Wallet & Profile</span>
+    </div>
+  </nav>
+
+  <!-- Modal: Deposit & Cashout -->
+  <div class="modal-overlay" id="wallet-modal">
+    <div class="modal-box">
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px;">
+        <h3 id="modal-title" style="color: var(--gold-primary); font-size: 16px;">Top Up Balance</h3>
+        <button onclick="closeModal()" style="background: none; border: none; color: var(--text-secondary); font-size: 18px; cursor: pointer;">✕</button>
+      </div>
+      <div style="font-size: 12px; color: var(--text-secondary); margin-bottom: 12px;">Select Payment Gateway (Ethiopia)</div>
+      
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 14px;">
+        <div style="background: var(--bg-surface); border: 1px solid var(--border-color); border-radius: 10px; padding: 10px; text-align: center; cursor: pointer; color: var(--mint-light); font-weight: bold; font-size: 12px;">Telebirr</div>
+        <div style="background: var(--bg-surface); border: 1px solid var(--border-color); border-radius: 10px; padding: 10px; text-align: center; cursor: pointer; color: #3B82F6; font-weight: bold; font-size: 12px;">CBE Birr</div>
+      </div>
+
+      <div style="display: flex; gap: 6px; margin-bottom: 14px;">
+        <button onclick="setDepositAmount(50)" class="ticket-chip" style="flex:1;">+50</button>
+        <button onclick="setDepositAmount(100)" class="ticket-chip" style="flex:1;">+100</button>
+        <button onclick="setDepositAmount(200)" class="ticket-chip" style="flex:1;">+200</button>
+      </div>
+
+      <input type="number" id="deposit-input" value="100" style="width: 100%; height: 42px; background: var(--bg-dark); border: 1px solid var(--border-color); border-radius: 10px; color: white; padding: 0 12px; font-weight: bold; font-size: 14px; margin-bottom: 14px;" />
+      
+      <button onclick="confirmDeposit()" class="btn-orange" style="width: 100%; height: 42px; justify-content: center; font-size: 14px;">PROCEED PAYMENT</button>
+    </div>
+  </div>
+
+  <!-- Modal: Win Fanfare -->
+  <div class="modal-overlay" id="win-modal">
+    <div class="modal-box" style="text-align: center; border-color: var(--gold-primary);">
+      <div style="font-size: 48px; margin-bottom: 8px;">👑</div>
+      <h2 style="font-family: 'Playfair Display', serif; color: var(--gold-primary); font-size: 24px;">BINGO WINNER!</h2>
+      <div style="font-size: 13px; color: var(--mint-light); margin: 6px 0 14px 0;" id="win-reason-text">Diagonal Line Completed!</div>
+      <div style="font-size: 28px; font-weight: 900; color: white;" id="win-payout-text">+1,500 ETB</div>
+      <div style="font-size: 11px; color: var(--text-secondary); margin-bottom: 18px;">Credited to your Ethiopian wallet balance</div>
+      <button onclick="closeWinModal()" class="btn-orange" style="width: 100%; height: 44px; justify-content: center;">CONTINUE PLAYING</button>
+    </div>
+  </div>
+</div>
+
+<script>
+  // Initialize Telegram SDK safely
+  if (window.Telegram && window.Telegram.WebApp) {
+    const tg = window.Telegram.WebApp;
+    tg.ready();
+    tg.expand();
+    tg.setHeaderColor('#06191E');
+    tg.setBackgroundColor('#06191E');
+  }
+
+  // State Management
+  let balance = 250;
+  let selectedTicketNum = 77;
+  let activeStake = 20;
+  let activePrize = 1500;
+  let autoDaub = true;
+  let currentCard = [];
+  let calledNumbers = [];
+  let gameInterval = null;
+
+  // Initialize App
+  window.onload = () => {
+    initTicketChips();
+    generateRandomCard();
+    init100Matrix();
+    startCountdownTimer();
+  };
+
+  function updateBalanceDisplay() {
+    document.getElementById('wallet-balance').innerText = balance;
+    document.getElementById('profile-balance').innerText = balance;
+  }
+
+  function switchNavTab(tab) {
+    document.getElementById('view-play').style.display = tab === 'play' ? 'block' : 'none';
+    document.getElementById('view-leaderboard').style.display = tab === 'leaderboard' ? 'block' : 'none';
+    document.getElementById('view-profile').style.display = tab === 'profile' ? 'block' : 'none';
+
+    document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
+    document.getElementById(`nav-${tab}`).classList.add('active');
+  }
+
+  /* --- Ticket & Grid Generation --- */
+  function initTicketChips() {
+    const container = document.getElementById('ticket-chips-container');
+    container.innerHTML = '';
+    for (let i = 70; i <= 95; i++) {
+      const chip = document.createElement('div');
+      chip.className = `ticket-chip ${i === selectedTicketNum ? 'selected' : ''}`;
+      chip.innerText = `#${i}`;
+      chip.onclick = () => selectTicket(i);
+      container.appendChild(chip);
+    }
+  }
+
+  function selectTicket(num) {
+    selectedTicketNum = num;
+    document.getElementById('ticket-number-label').innerText = num;
+    initTicketChips();
+    generateRandomCard();
+  }
+
+  function generateRandomCard() {
+    currentCard = [];
+    const ranges = [
+      [1, 20],   // B
+      [21, 40],  // I
+      [41, 60],  // N
+      [61, 80],  // G
+      [81, 100]  // O
+    ];
+
+    const columns = ranges.map(range => {
+      const nums = [];
+      while (nums.length < 5) {
+        const rand = Math.floor(Math.random() * (range[1] - range[0] + 1)) + range[0];
+        if (!nums.includes(rand)) nums.push(rand);
+      }
+      return nums;
+    });
+
+    for (let r = 0; r < 5; r++) {
+      const row = [];
+      for (let c = 0; c < 5; c++) {
+        if (r === 2 && c === 2) {
+          row.push({ number: 0, isFree: true, isMarked: true, isWinning: false });
+        } else {
+          row.push({ number: columns[c][r], isFree: false, isMarked: false, isWinning: false });
+        }
+      }
+      currentCard.push(row);
+    }
+    renderBingoGrid('preview-bingo-grid', false);
+  }
+
+  function renderBingoGrid(gridId, isInteractive) {
+    const grid = document.getElementById(gridId);
+    grid.innerHTML = '';
+
+    for (let r = 0; r < 5; r++) {
+      for (let c = 0; c < 5; c++) {
+        const cell = currentCard[r][c];
+        const div = document.createElement('div');
+        let classes = 'bingo-cell';
+        if (cell.isFree) classes += ' free-space';
+        if (cell.isMarked && !cell.isFree) classes += ' marked';
+        if (cell.isWinning) classes += ' winning';
+        div.className = classes;
+
+        div.innerHTML = cell.isFree ? '<div>★</div><div style="font-size:9px;">FREE</div>' : cell.number;
+
+        if (isInteractive) {
+          div.onclick = () => handleCellClick(r, c);
+        }
+        grid.appendChild(div);
+      }
+    }
+  }
+
+  function init100Matrix() {
+    const container = document.getElementById('matrix-100-grid');
+    container.innerHTML = '';
+    for (let i = 1; i <= 100; i++) {
+      const cell = document.createElement('div');
+      cell.id = `matrix-cell-${i}`;
+      cell.className = 'matrix-cell';
+      cell.innerText = i;
+      container.appendChild(cell);
+    }
+  }
+
+  /* --- Navigation Transitions --- */
+  function enterTicketSelection(name, stake, prize) {
+    activeStake = stake;
+    activePrize = prize;
+    document.getElementById('selected-room-title').innerText = `${name} (${stake} ETB)`;
+    document.getElementById('lobby-section').style.display = 'none';
+    document.getElementById('ticket-section').style.display = 'block';
+  }
+
+  function backToLobby() {
+    document.getElementById('ticket-section').style.display = 'none';
+    document.getElementById('lobby-section').style.display = 'block';
+  }
+
+  function startLiveGame() {
+    if (balance < activeStake) {
+      alert('Insufficient balance! Please top up your wallet.');
+      openDepositModal();
+      return;
+    }
+    balance -= activeStake;
+    updateBalanceDisplay();
+
+    document.getElementById('ticket-section').style.display = 'none';
+    document.getElementById('gameplay-section').style.display = 'block';
+
+    calledNumbers = [];
+    init100Matrix();
+    renderBingoGrid('active-bingo-grid', true);
+
+    // Start live ball caller loop (1 ball every 2.4 seconds)
+    if (gameInterval) clearInterval(gameInterval);
+    gameInterval = setInterval(callNextBall, 2400);
+  }
+
+  function callNextBall() {
+    if (calledNumbers.length >= 100) {
+      clearInterval(gameInterval);
+      return;
+    }
+
+    let nextBall;
+    do {
+      nextBall = Math.floor(Math.random() * 100) + 1;
+    } while (calledNumbers.includes(nextBall));
+
+    calledNumbers.push(nextBall);
+    document.getElementById('caller-ball').innerText = nextBall;
+    document.getElementById('called-count').innerText = calledNumbers.length;
+
+    // Update matrix
+    const matrixCell = document.getElementById(`matrix-cell-${nextBall}`);
+    if (matrixCell) {
+      document.querySelectorAll('.matrix-cell.latest').forEach(el => {
+        el.classList.remove('latest');
+        el.classList.add('called');
+      });
+      matrixCell.classList.add('latest');
+    }
+
+    // Auto daub check
+    if (autoDaub) {
+      for (let r = 0; r < 5; r++) {
+        for (let c = 0; c < 5; c++) {
+          if (currentCard[r][c].number === nextBall) {
+            currentCard[r][c].isMarked = true;
+          }
+        }
+      }
+      renderBingoGrid('active-bingo-grid', true);
+      checkForWin();
+    }
+  }
+
+  function handleCellClick(r, c) {
+    const cell = currentCard[r][c];
+    if (calledNumbers.includes(cell.number) || cell.isFree) {
+      cell.isMarked = true;
+      renderBingoGrid('active-bingo-grid', true);
+      checkForWin();
+    }
+  }
+
+  function toggleAutoDaub() {
+    autoDaub = !autoDaub;
+    document.getElementById('autodaub-btn').innerText = `Auto-Daub: ${autoDaub ? 'ON' : 'OFF'}`;
+  }
+
+  function checkForWin() {
+    let winFound = false;
+
+    // Check rows
+    for (let r = 0; r < 5; r++) {
+      if (currentCard[r].every(c => c.isMarked)) {
+        currentCard[r].forEach(c => c.isWinning = true);
+        winFound = true;
+      }
+    }
+    // Check columns
+    for (let c = 0; c < 5; c++) {
+      if ([0,1,2,3,4].every(r => currentCard[r][c].isMarked)) {
+        [0,1,2,3,4].forEach(r => currentCard[r][c].isWinning = true);
+        winFound = true;
+      }
+    }
+    // Check diagonals
+    if ([0,1,2,3,4].every(i => currentCard[i][i].isMarked)) {
+      [0,1,2,3,4].forEach(i => currentCard[i][i].isWinning = true);
+      winFound = true;
+    }
+    if ([0,1,2,3,4].every(i => currentCard[i][4 - i].isMarked)) {
+      [0,1,2,3,4].forEach(i => currentCard[i][4 - i].isWinning = true);
+      winFound = true;
+    }
+
+    if (winFound) {
+      clearInterval(gameInterval);
+      renderBingoGrid('active-bingo-grid', true);
+      triggerWinCelebration();
+    }
+  }
+
+  function triggerWinCelebration() {
+    balance += activePrize;
+    updateBalanceDisplay();
+    document.getElementById('win-payout-text').innerText = `+${activePrize} ETB`;
+    document.getElementById('win-modal').classList.add('open');
+  }
+
+  function closeWinModal() {
+    document.getElementById('win-modal').classList.remove('open');
+    leaveGame();
+  }
+
+  function leaveGame() {
+    if (gameInterval) clearInterval(gameInterval);
+    document.getElementById('gameplay-section').style.display = 'none';
+    document.getElementById('lobby-section').style.display = 'block';
+  }
+
+  /* --- Wallet & Deposit Modals --- */
+  function openDepositModal() {
+    document.getElementById('modal-title').innerText = 'Top Up Wallet';
+    document.getElementById('wallet-modal').classList.add('open');
+  }
+
+  function openWithdrawModal() {
+    document.getElementById('modal-title').innerText = 'Instant Cashout';
+    document.getElementById('wallet-modal').classList.add('open');
+  }
+
+  function closeModal() {
+    document.getElementById('wallet-modal').classList.remove('open');
+  }
+
+  function setDepositAmount(val) {
+    document.getElementById('deposit-input').value = val;
+  }
+
+  function confirmDeposit() {
+    const val = parseInt(document.getElementById('deposit-input').value) || 0;
+    balance += val;
+    updateBalanceDisplay();
+    closeModal();
+    alert(`Successfully credited +${val} ETB to your account!`);
+  }
+
+  function claimDailyReward() {
+    balance += 50;
+    updateBalanceDisplay();
+    alert('Daily bonus +50 ETB claimed successfully!');
+  }
+
+  function setLeaderboardTab(el, tab) {
+    document.querySelectorAll('.filter-tab').forEach(t => t.classList.remove('active'));
+    el.classList.add('active');
+  }
+
+  function startCountdownTimer() {
+    let s = 48;
+    setInterval(() => {
+      s = s <= 0 ? 59 : s - 1;
+      const el = document.getElementById('sec-timer');
+      if (el) el.innerText = `${s < 10 ? '0' : ''}${s}s`;
+    }, 1000);
+  }
+</script>
+</body>
+</html>
