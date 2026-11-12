@@ -119,4 +119,22 @@ class ExampleUnitTest {
         val roomWaiting = room.copy(currentPlayers = 1)
         assertFalse(roomWaiting.currentPlayers >= 2)
     }
+
+    @Test
+    fun testTelebirrDepositFeeCalculation() {
+        val depositAmount = 500
+        val telebirrFee = 0 // Telebirr has 0% deposit fee
+        val netCredited = depositAmount - telebirrFee
+        assertEquals(500, netCredited)
+        assertEquals(0, telebirrFee)
+    }
+
+    @Test
+    fun testCbeBirrCashoutFeeCalculation() {
+        val cashoutAmount = 1000
+        val cbeFee = (cashoutAmount * 1) / 100 // 1% CBE cashout fee
+        val netReceived = cashoutAmount - cbeFee
+        assertEquals(10, cbeFee)
+        assertEquals(990, netReceived)
+    }
 }

@@ -54,6 +54,8 @@ import com.example.ui.theme.MintDark
 import com.example.ui.theme.MintLight
 import com.example.ui.theme.MintPrimary
 import com.example.ui.theme.OrangeDynamic
+import com.example.ui.theme.TelebirrBlue
+import com.example.ui.theme.CbeBirrOrange
 import com.example.ui.theme.TextPrimary
 import com.example.ui.theme.TextSecondary
 
@@ -212,6 +214,59 @@ fun ProfileScreen(
                         )
                     }
                 }
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            // Gateway Security & Supported Partners Indicator
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = "🔒 Secured Gateways:",
+                        fontSize = 10.sp,
+                        color = TextSecondary,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(4.dp))
+                            .background(Color(0x330091DA))
+                            .padding(horizontal = 6.dp, vertical = 2.dp)
+                    ) {
+                        Text(
+                            text = "telebirr",
+                            color = TelebirrBlue,
+                            fontSize = 9.sp,
+                            fontWeight = FontWeight.Black
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(4.dp))
+                            .background(Color(0x33FF6D00))
+                            .padding(horizontal = 6.dp, vertical = 2.dp)
+                    ) {
+                        Text(
+                            text = "CBE Birr",
+                            color = CbeBirrOrange,
+                            fontSize = 9.sp,
+                            fontWeight = FontWeight.Black
+                        )
+                    }
+                }
+
+                Text(
+                    text = "Instant 0% Fee",
+                    fontSize = 10.sp,
+                    color = MintLight,
+                    fontWeight = FontWeight.Bold
+                )
             }
         }
 
