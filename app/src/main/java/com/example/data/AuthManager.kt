@@ -13,6 +13,7 @@ import com.google.android.libraries.identity.googleid.GetSignInWithGoogleOption
 import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential
 import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential.Companion.TYPE_GOOGLE_ID_TOKEN_CREDENTIAL
 import com.google.firebase.Firebase
+import com.google.firebase.FirebaseApp
 import com.google.firebase.auth.GoogleAuthProvider
 import com.google.firebase.auth.auth
 import kotlinx.coroutines.CoroutineScope
@@ -25,6 +26,15 @@ object AuthManager {
 
     private const val TAG = "AuthManager"
 
+    fun isFirebaseInitialized(context: Context): Boolean {
+        return try {
+            FirebaseApp.getApps(context.applicationContext).isNotEmpty()
+        } catch (e: Exception) {
+            Log.w(TAG, "FirebaseApp check failed: ${e.message}")
+            false
+        }
+    }
+
     fun attemptAutoSignIn(
         context: Context,
         credentialManager: CredentialManager,
@@ -32,7 +42,18 @@ object AuthManager {
         onUnauthenticated: () -> Unit,
         scope: CoroutineScope
     ) {
-        if (Firebase.auth.currentUser != null) {
+        if (!isFirebaseInitialized(context)) {
+            onUnauthenticated()
+            return
+        }
+
+        val alreadySignedIn = try {
+            Firebase.auth.currentUser != null
+        } catch (e: Exception) {
+            Log.w(TAG, "Unable to read Firebase currentUser: ${e.message}")
+            false
+        }
+        if (alreadySignedIn) {
             onAuthSuccess()
             return
         }
@@ -82,6 +103,11 @@ object AuthManager {
         scope: CoroutineScope,
         onAuthCancelled: () -> Unit = {}
     ) {
+        if (!isFirebaseInitialized(context)) {
+            onAuthError("Google Sign-In is not configured in this build. Use Phone & PIN login or add google-services.json.")
+            return
+        }
+
         val clientId = try {
             @Suppress("DiscouragedApi")
             val resId = context.resources.getIdentifier("default_web_client_id", "string", context.packageName)
@@ -136,7 +162,9 @@ object AuthManager {
                 } catch (e: Exception) {
                     Log.w(TAG, "Failed to clear credential state: ${e.message}")
                 } finally {
-                    Firebase.auth.signOut()
+                    try {
+                        Firebase.auth.signOut()
+                    } catch (_: Exception) {}
                     onSignOutComplete()
                 }
             }

@@ -1,8 +1,10 @@
 package com.example.viewmodel
 
 import android.app.Application
+import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.data.AuthManager
 import com.example.data.FirestoreGameRoom
 import com.example.data.FirestoreLeaderboard
 import com.example.data.FirestoreRepository
@@ -18,12 +20,15 @@ import com.example.model.TransactionItem
 import com.example.model.UserProfile
 import com.example.sound.SoundManager
 import com.google.firebase.Firebase
+import com.google.firebase.auth.FirebaseUser
 import com.google.firebase.auth.auth
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -91,7 +96,16 @@ data class BingoUiState(
 class BingoViewModel(application: Application) : AndroidViewModel(application) {
 
     val soundManager = SoundManager(application)
-    val repository = FirestoreRepository(application)
+    val repository: FirestoreRepository? = try {
+        if (AuthManager.isFirebaseInitialized(application)) {
+            FirestoreRepository(application)
+        } else {
+            null
+        }
+    } catch (e: Exception) {
+        Log.w("BingoViewModel", "Firestore unavailable at startup: ${e.message}")
+        null
+    }
 
     private val _uiState = MutableStateFlow(BingoUiState())
     val uiState: StateFlow<BingoUiState> = _uiState.asStateFlow()
@@ -100,100 +114,135 @@ class BingoViewModel(application: Application) : AndroidViewModel(application) {
     private var roomSyncJob: Job? = null
     private var playersJob: Job? = null
     private var countdownJob: Job? = null
+    private var roomsObserveJob: Job? = null
+    private var leaderboardObserveJob: Job? = null
+    private var profileObserveJob: Job? = null
+    private var transactionsObserveJob: Job? = null
+
+    private fun currentFirebaseUser(): FirebaseUser? {
+        return try {
+            if (AuthManager.isFirebaseInitialized(getApplication())) {
+                Firebase.auth.currentUser
+            } else {
+                null
+            }
+        } catch (e: Exception) {
+            Log.w("BingoViewModel", "Unable to check currentUser: ${e.message}")
+            null
+        }
+    }
 
     init {
         initializeRooms()
         selectTicket(77)
         startTimers()
 
-        // Sync default rooms into Firestore
+        if (currentFirebaseUser() != null) {
+            handleGoogleSignInSuccess()
+        }
+    }
+
+    private fun startCloudLobbySync() {
+        val repo = repository ?: return
+        if (currentFirebaseUser() == null) return
+
         viewModelScope.launch {
             try {
-                repository.syncDefaultRooms()
-            } catch (_: Exception) {}
+                repo.syncDefaultRooms()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.w("BingoViewModel", "syncDefaultRooms skipped: ${e.message}")
+            }
         }
 
-        // Stream live rooms from Firestore
-        viewModelScope.launch {
-            repository.observeRooms().collect { firestoreRooms ->
-                if (firestoreRooms.isNotEmpty()) {
-                    val orderedIds = listOf("mini_starter", "standard", "high_roller", "mega_addis", "habesha_vip")
-                    val mappedRooms = firestoreRooms.map { fr ->
-                        val badgeColor = when (fr.id) {
-                            "mini_starter" -> 0xFF20C997
-                            "standard" -> 0xFFFFC107
-                            "high_roller" -> 0xFFFF5722
-                            "mega_addis" -> 0xFFFFC107
-                            "habesha_vip" -> 0xFFFF5722
-                            else -> 0xFF20C997
+        roomsObserveJob?.cancel()
+        roomsObserveJob = viewModelScope.launch {
+            repo.observeRooms()
+                .catch { error ->
+                    if (error is CancellationException) throw error
+                    Log.w("BingoViewModel", "observeRooms error: ${error.message}")
+                }
+                .collect { firestoreRooms ->
+                    if (firestoreRooms.isNotEmpty()) {
+                        val orderedIds = listOf("mini_starter", "standard", "high_roller", "mega_addis", "habesha_vip")
+                        val mappedRooms = firestoreRooms.map { fr ->
+                            val badgeColor = when (fr.id) {
+                                "mini_starter" -> 0xFF20C997
+                                "standard" -> 0xFFFFC107
+                                "high_roller" -> 0xFFFF5722
+                                "mega_addis" -> 0xFFFFC107
+                                "habesha_vip" -> 0xFFFF5722
+                                else -> 0xFF20C997
+                            }
+                            val mins = fr.countdownSeconds / 60
+                            val secs = fr.countdownSeconds % 60
+                            val timeStr = String.format("%02d:%02d", mins, secs)
+                            val statusText = when {
+                                fr.status == "IN_PROGRESS" -> "Game Live 🔴"
+                                fr.currentPlayers >= 2 -> "$timeStr left"
+                                else -> "$timeStr (min 2 req)"
+                            }
+                            val pool = fr.totalPoolEtb.toInt()
+                            Room(
+                                id = fr.id,
+                                name = fr.name,
+                                stakeEtb = fr.stakeEtb.toInt(),
+                                totalPoolEtb = pool,
+                                prizeEtb = (pool * 80) / 100, // 80% to winner
+                                houseCommissionEtb = (pool * 20) / 100, // 20% house commission
+                                currentPlayers = fr.currentPlayers.toInt(),
+                                maxPlayers = 100,
+                                countdownSeconds = fr.countdownSeconds.toInt(),
+                                statusText = statusText,
+                                badgeColorHex = badgeColor
+                            )
+                        }.sortedBy { r ->
+                            val idx = orderedIds.indexOf(r.id)
+                            if (idx >= 0) idx else 99
                         }
-                        val mins = fr.countdownSeconds / 60
-                        val secs = fr.countdownSeconds % 60
-                        val timeStr = String.format("%02d:%02d", mins, secs)
-                        val statusText = when {
-                            fr.status == "IN_PROGRESS" -> "Game Live 🔴"
-                            fr.currentPlayers >= 2 -> "$timeStr left"
-                            else -> "$timeStr (min 2 req)"
-                        }
-                        val pool = fr.totalPoolEtb.toInt()
-                        Room(
-                            id = fr.id,
-                            name = fr.name,
-                            stakeEtb = fr.stakeEtb.toInt(),
-                            totalPoolEtb = pool,
-                            prizeEtb = (pool * 80) / 100, // 80% to winner
-                            houseCommissionEtb = (pool * 20) / 100, // 20% house commission
-                            currentPlayers = fr.currentPlayers.toInt(),
-                            maxPlayers = 100,
-                            countdownSeconds = fr.countdownSeconds.toInt(),
-                            statusText = statusText,
-                            badgeColorHex = badgeColor
-                        )
-                    }.sortedBy { r ->
-                        val idx = orderedIds.indexOf(r.id)
-                        if (idx >= 0) idx else 99
-                    }
 
+                        _uiState.update { st ->
+                            val updatedSel = st.selectedRoom?.let { sel ->
+                                mappedRooms.find { it.id == sel.id } ?: sel
+                            }
+                            st.copy(rooms = mappedRooms, selectedRoom = updatedSel)
+                        }
+                    }
+                }
+        }
+
+        leaderboardObserveJob?.cancel()
+        leaderboardObserveJob = viewModelScope.launch {
+            repo.observeLeaderboard()
+                .catch { error ->
+                    if (error is CancellationException) throw error
+                    Log.w("BingoViewModel", "observeLeaderboard error: ${error.message}")
+                }
+                .collect { entries ->
+                    val curUid = currentFirebaseUser()?.uid
+                    val mapped = entries.mapIndexed { idx, item ->
+                        val isMe = (curUid != null && item.userId == curUid)
+                        LeaderboardEntry(
+                            rank = idx + 1,
+                            name = if (isMe) "${item.name} (YOU)" else item.name,
+                            phoneMasked = if (isMe) "YOU" else if (item.city.isNotBlank()) "📍 ${item.city}" else "Ethiopia",
+                            wins = item.gamesWon.toInt(),
+                            prizeEtb = item.wonEtb.toInt(),
+                            isCurrentUser = isMe
+                        )
+                    }
                     _uiState.update { st ->
-                        val updatedSel = st.selectedRoom?.let { sel ->
-                            mappedRooms.find { it.id == sel.id } ?: sel
-                        }
-                        st.copy(rooms = mappedRooms, selectedRoom = updatedSel)
+                        st.copy(
+                            tournamentLeaderboards = mapOf(
+                                TournamentTab.ENKUTATASH to mapped,
+                                TournamentTab.DAILY to mapped,
+                                TournamentTab.WEEKLY to mapped,
+                                TournamentTab.MONTHLY to mapped
+                            )
+                        )
                     }
                 }
-            }
-        }
-
-        // Stream real-time global leaderboard from Firestore
-        viewModelScope.launch {
-            repository.observeLeaderboard().collect { entries ->
-                val curUid = Firebase.auth.currentUser?.uid
-                val mapped = entries.mapIndexed { idx, item ->
-                    val isMe = (curUid != null && item.userId == curUid)
-                    LeaderboardEntry(
-                        rank = idx + 1,
-                        name = if (isMe) "${item.name} (YOU)" else item.name,
-                        phoneMasked = if (isMe) "YOU" else if (item.city.isNotBlank()) "📍 ${item.city}" else "Ethiopia",
-                        wins = item.gamesWon.toInt(),
-                        prizeEtb = item.wonEtb.toInt(),
-                        isCurrentUser = isMe
-                    )
-                }
-                _uiState.update { st ->
-                    st.copy(
-                        tournamentLeaderboards = mapOf(
-                            TournamentTab.ENKUTATASH to mapped,
-                            TournamentTab.DAILY to mapped,
-                            TournamentTab.WEEKLY to mapped,
-                            TournamentTab.MONTHLY to mapped
-                        )
-                    )
-                }
-            }
-        }
-
-        if (Firebase.auth.currentUser != null) {
-            handleGoogleSignInSuccess()
         }
     }
 
@@ -354,11 +403,12 @@ class BingoViewModel(application: Application) : AndroidViewModel(application) {
                 playView = PlayView.TICKET_SELECTION
             )
         }
-        val user = Firebase.auth.currentUser
-        if (user != null) {
+        val user = currentFirebaseUser()
+        val repo = repository
+        if (user != null && repo != null) {
             viewModelScope.launch {
                 try {
-                    repository.joinRoom(
+                    repo.joinRoom(
                         roomId = room.id,
                         userId = user.uid,
                         name = _uiState.value.userProfile.name,
@@ -377,11 +427,12 @@ class BingoViewModel(application: Application) : AndroidViewModel(application) {
         roomSyncJob?.cancel()
         playersJob?.cancel()
         val curRoom = _uiState.value.selectedRoom
-        val user = Firebase.auth.currentUser
-        if (curRoom != null && user != null) {
+        val user = currentFirebaseUser()
+        val repo = repository
+        if (curRoom != null && user != null && repo != null) {
             viewModelScope.launch {
                 try {
-                    repository.leaveRoom(curRoom.id, user.uid)
+                    repo.leaveRoom(curRoom.id, user.uid)
                 } catch (_: Exception) {}
             }
         }
@@ -454,18 +505,24 @@ class BingoViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun observeRoomPlayers(roomId: String) {
+        val repo = repository ?: return
         playersJob?.cancel()
         playersJob = viewModelScope.launch {
-            repository.observeRoomPlayers(roomId).collect { players ->
-                _uiState.update { it.copy(activeRoomPlayers = players) }
-            }
+            repo.observeRoomPlayers(roomId)
+                .catch { error ->
+                    if (error is CancellationException) throw error
+                    Log.w("BingoViewModel", "observeRoomPlayers error: ${error.message}")
+                }
+                .collect { players ->
+                    _uiState.update { it.copy(activeRoomPlayers = players) }
+                }
         }
     }
 
     fun startLiveGame() {
         val state = _uiState.value
         val room = state.selectedRoom ?: return
-        val user = Firebase.auth.currentUser
+        val user = currentFirebaseUser()
 
         if (state.userProfile.balanceEtb < room.stakeEtb) {
             _uiState.update {
@@ -499,10 +556,11 @@ class BingoViewModel(application: Application) : AndroidViewModel(application) {
 
         soundManager.playRoundStart()
 
-        if (user != null) {
+        val repo = repository
+        if (user != null && repo != null) {
             viewModelScope.launch {
                 try {
-                    repository.recordTransaction(
+                    repo.recordTransaction(
                         userId = user.uid,
                         transaction = FirestoreTransaction(
                             id = "tx_${System.currentTimeMillis()}",
@@ -514,7 +572,7 @@ class BingoViewModel(application: Application) : AndroidViewModel(application) {
                             reference = "ROOM-${room.id}"
                         )
                     )
-                    repository.updateUserProfile(
+                    repo.updateUserProfile(
                         FirestoreUserProfile(
                             userId = user.uid,
                             name = state.userProfile.name,
@@ -536,41 +594,49 @@ class BingoViewModel(application: Application) : AndroidViewModel(application) {
         gameJob?.cancel()
         roomSyncJob?.cancel()
 
-        val currentUid = Firebase.auth.currentUser?.uid ?: "local_player"
+        val currentUid = currentFirebaseUser()?.uid ?: "local_player"
+        val repo = repository
 
         // 1. Synchronize real-time room state from Firestore (called balls, winner propagation)
-        roomSyncJob = viewModelScope.launch {
-            repository.observeRoom(roomId).collect { liveRoom ->
-                if (liveRoom == null) return@collect
+        if (repo != null && currentFirebaseUser() != null) {
+            roomSyncJob = viewModelScope.launch {
+                repo.observeRoom(roomId)
+                    .catch { error ->
+                        if (error is CancellationException) throw error
+                        Log.w("BingoViewModel", "observeRoom error: ${error.message}")
+                    }
+                    .collect { liveRoom ->
+                        if (liveRoom == null) return@collect
 
-                // Check if another player in this room won BINGO
-                if (liveRoom.status == "FINISHED" && liveRoom.winnerId.isNotBlank()) {
-                    if (liveRoom.winnerId != currentUid) {
-                        gameJob?.cancel()
-                        _uiState.update {
-                            it.copy(
-                                isCalling = false,
-                                notificationMessage = "🎉 BINGO! ${liveRoom.winnerName} won ${liveRoom.prizeEtb} ETB!"
-                            )
+                        // Check if another player in this room won BINGO
+                        if (liveRoom.status == "FINISHED" && liveRoom.winnerId.isNotBlank()) {
+                            if (liveRoom.winnerId != currentUid) {
+                                gameJob?.cancel()
+                                _uiState.update {
+                                    it.copy(
+                                        isCalling = false,
+                                        notificationMessage = "🎉 BINGO! ${liveRoom.winnerName} won ${liveRoom.prizeEtb} ETB!"
+                                    )
+                                }
+                            }
+                        }
+
+                        // Sync called balls across devices
+                        val firestoreNumbers = liveRoom.calledNumbers.map { it.toInt() }
+                        val currentCalled = _uiState.value.calledNumbers
+
+                        if (firestoreNumbers.size > currentCalled.size) {
+                            val newNumbers = firestoreNumbers.drop(currentCalled.size)
+                            for (num in newNumbers) {
+                                handleNextBallCalled(num)
+                            }
                         }
                     }
-                }
-
-                // Sync called balls across devices
-                val firestoreNumbers = liveRoom.calledNumbers.map { it.toInt() }
-                val currentCalled = _uiState.value.calledNumbers
-
-                if (firestoreNumbers.size > currentCalled.size) {
-                    val newNumbers = firestoreNumbers.drop(currentCalled.size)
-                    for (num in newNumbers) {
-                        handleNextBallCalled(num)
-                    }
-                }
             }
         }
 
         // 2. Room Caller loop:
-        // Host device generates and updates balls into the shared Firestore room document
+        // Host device generates and updates balls into the shared Firestore room document (or local fallback when offline)
         gameJob = viewModelScope.launch {
             delay(1000)
             val poolNumbers = (1..75).toMutableList()
@@ -582,22 +648,26 @@ class BingoViewModel(application: Application) : AndroidViewModel(application) {
                 val intervalMs = if (_uiState.value.isFastCallerSpeed) 1800L else 2600L
                 delay(intervalMs) // Fast or standard caller cadence
 
-                // The host device pushes the next ball to Firestore
-                val players = _uiState.value.activeRoomPlayers
-                val isHost = players.isEmpty() || players.minByOrNull { it.userId }?.userId == currentUid
+                if (repo != null && currentFirebaseUser() != null) {
+                    val players = _uiState.value.activeRoomPlayers
+                    val isHost = players.isEmpty() || players.minByOrNull { it.userId }?.userId == currentUid
 
-                if (isHost && _uiState.value.winCelebration == null) {
-                    val next = poolNumbers.removeAt(0).toLong()
-                    calledSoFar.add(next)
-                    try {
-                        repository.updateRoomState(
-                            roomId = roomId,
-                            countdownSeconds = 0L,
-                            status = "IN_PROGRESS",
-                            calledNumbers = calledSoFar.toList(),
-                            latestBall = next
-                        )
-                    } catch (_: Exception) {}
+                    if (isHost && _uiState.value.winCelebration == null) {
+                        val next = poolNumbers.removeAt(0).toLong()
+                        calledSoFar.add(next)
+                        try {
+                            repo.updateRoomState(
+                                roomId = roomId,
+                                countdownSeconds = 0L,
+                                status = "IN_PROGRESS",
+                                calledNumbers = calledSoFar.toList(),
+                                latestBall = next
+                            )
+                        } catch (_: Exception) {}
+                    }
+                } else if (_uiState.value.winCelebration == null) {
+                    val next = poolNumbers.removeAt(0)
+                    handleNextBallCalled(next)
                 }
 
                 if (_uiState.value.winCelebration != null) {
@@ -725,7 +795,7 @@ class BingoViewModel(application: Application) : AndroidViewModel(application) {
 
             val room = state.selectedRoom
             val prize = room?.prizeEtb ?: 480
-            val user = Firebase.auth.currentUser
+            val user = currentFirebaseUser()
 
             // Highlight winning cells
             val winningGrid = grid.mapIndexed { r, rowCells ->
@@ -745,10 +815,11 @@ class BingoViewModel(application: Application) : AndroidViewModel(application) {
             )
 
             // Claim win in Firestore so prize is credited and all devices see winner
-            if (user != null && room != null) {
+            val repo = repository
+            if (user != null && room != null && repo != null) {
                 viewModelScope.launch {
                     try {
-                        repository.claimBingoWin(
+                        repo.claimBingoWin(
                             roomId = room.id,
                             userId = user.uid,
                             winnerName = state.userProfile.name,
@@ -828,11 +899,12 @@ class BingoViewModel(application: Application) : AndroidViewModel(application) {
                 notificationMessage = "Successfully credited +$amount ETB via ${method.displayName} ($phoneNumber)!"
             )
         }
-        val user = Firebase.auth.currentUser
-        if (user != null) {
+        val user = currentFirebaseUser()
+        val repo = repository
+        if (user != null && repo != null) {
             viewModelScope.launch {
                 try {
-                    repository.recordTransaction(
+                    repo.recordTransaction(
                         userId = user.uid,
                         transaction = FirestoreTransaction(
                             id = newTx.id,
@@ -844,7 +916,7 @@ class BingoViewModel(application: Application) : AndroidViewModel(application) {
                             reference = phoneNumber
                         )
                     )
-                    repository.updateUserProfile(
+                    repo.updateUserProfile(
                         FirestoreUserProfile(
                             userId = user.uid,
                             name = _uiState.value.userProfile.name,
@@ -885,11 +957,12 @@ class BingoViewModel(application: Application) : AndroidViewModel(application) {
                 notificationMessage = "Cashout of $amount ETB sent to ${method.displayName} ($phoneNumber) successfully!"
             )
         }
-        val user = Firebase.auth.currentUser
-        if (user != null) {
+        val user = currentFirebaseUser()
+        val repo = repository
+        if (user != null && repo != null) {
             viewModelScope.launch {
                 try {
-                    repository.recordTransaction(
+                    repo.recordTransaction(
                         userId = user.uid,
                         transaction = FirestoreTransaction(
                             id = newTx.id,
@@ -901,7 +974,7 @@ class BingoViewModel(application: Application) : AndroidViewModel(application) {
                             reference = phoneNumber
                         )
                     )
-                    repository.updateUserProfile(
+                    repo.updateUserProfile(
                         FirestoreUserProfile(
                             userId = user.uid,
                             name = _uiState.value.userProfile.name,
@@ -945,11 +1018,12 @@ class BingoViewModel(application: Application) : AndroidViewModel(application) {
                 notificationMessage = "Daily bonus +$bonus ETB claimed! Streak: ${newProfile.dailyStreakDays} days 🔥"
             )
         }
-        val user = Firebase.auth.currentUser
-        if (user != null) {
+        val user = currentFirebaseUser()
+        val repo = repository
+        if (user != null && repo != null) {
             viewModelScope.launch {
                 try {
-                    repository.recordTransaction(
+                    repo.recordTransaction(
                         userId = user.uid,
                         transaction = FirestoreTransaction(
                             id = newTx.id,
@@ -961,7 +1035,7 @@ class BingoViewModel(application: Application) : AndroidViewModel(application) {
                             reference = "DAY_${newProfile.dailyStreakDays}"
                         )
                     )
-                    repository.updateUserProfile(
+                    repo.updateUserProfile(
                         FirestoreUserProfile(
                             userId = user.uid,
                             name = newProfile.name,
@@ -1037,12 +1111,15 @@ class BingoViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun handleGoogleSignInSuccess() {
-        val user = Firebase.auth.currentUser ?: return
+        val user = currentFirebaseUser() ?: return
+        val repo = repository ?: return
+        startCloudLobbySync()
+
         viewModelScope.launch {
             try {
                 val name = user.displayName?.ifBlank { null } ?: "Habesha Player"
                 val phone = user.phoneNumber?.ifBlank { null } ?: "+251911000000"
-                val profile = repository.createInitialUserProfile(
+                val profile = repo.createInitialUserProfile(
                     userId = user.uid,
                     name = name,
                     phone = phone,
@@ -1065,47 +1142,61 @@ class BingoViewModel(application: Application) : AndroidViewModel(application) {
                 }
 
                 // Stream real-time user profile from Firestore
-                launch {
-                    repository.observeUserProfile(user.uid).collect { updated ->
-                        if (updated != null) {
-                            _uiState.update { st ->
-                                st.copy(
-                                    userProfile = st.userProfile.copy(
-                                        name = updated.name,
-                                        balanceEtb = updated.balanceEtb.toInt(),
-                                        gamesPlayed = updated.gamesPlayed.toInt(),
-                                        totalWinningsEtb = updated.totalEarningsEtb.toInt()
+                profileObserveJob?.cancel()
+                profileObserveJob = viewModelScope.launch {
+                    repo.observeUserProfile(user.uid)
+                        .catch { error ->
+                            if (error is CancellationException) throw error
+                            Log.w("BingoViewModel", "observeUserProfile error: ${error.message}")
+                        }
+                        .collect { updated ->
+                            if (updated != null) {
+                                _uiState.update { st ->
+                                    st.copy(
+                                        userProfile = st.userProfile.copy(
+                                            name = updated.name,
+                                            balanceEtb = updated.balanceEtb.toInt(),
+                                            gamesPlayed = updated.gamesPlayed.toInt(),
+                                            totalWinningsEtb = updated.totalEarningsEtb.toInt()
+                                        )
                                     )
-                                )
+                                }
                             }
                         }
-                    }
                 }
 
                 // Stream real transactions from Firestore
-                launch {
-                    repository.observeTransactions(user.uid).collect { firestoreTxs ->
-                        val mappedTxs = firestoreTxs.map { tx ->
-                            val isCredit = tx.type in listOf("DEPOSIT", "WIN")
-                            val sdf = SimpleDateFormat("HH:mm", Locale.getDefault())
-                            val dateStr = tx.createdAt?.toDate()?.let { sdf.format(it) } ?: "Just now"
-                            TransactionItem(
-                                id = tx.id,
-                                title = when (tx.type) {
-                                    "WIN" -> "Bingo Win (${tx.reference})"
-                                    "BET" -> "Room Stake (${tx.reference})"
-                                    "WITHDRAW" -> "Cashout (${tx.paymentMethod})"
-                                    else -> "Deposit via ${tx.paymentMethod}"
-                                },
-                                amountEtb = tx.amountEtb.toInt(),
-                                isCredit = isCredit,
-                                timestampFormatted = dateStr,
-                                method = tx.paymentMethod
-                            )
+                transactionsObserveJob?.cancel()
+                transactionsObserveJob = viewModelScope.launch {
+                    repo.observeTransactions(user.uid)
+                        .catch { error ->
+                            if (error is CancellationException) throw error
+                            Log.w("BingoViewModel", "observeTransactions error: ${error.message}")
                         }
-                        _uiState.update { it.copy(transactions = mappedTxs) }
-                    }
+                        .collect { firestoreTxs ->
+                            val mappedTxs = firestoreTxs.map { tx ->
+                                val isCredit = tx.type in listOf("DEPOSIT", "WIN")
+                                val sdf = SimpleDateFormat("HH:mm", Locale.getDefault())
+                                val dateStr = tx.createdAt?.toDate()?.let { sdf.format(it) } ?: "Just now"
+                                TransactionItem(
+                                    id = tx.id,
+                                    title = when (tx.type) {
+                                        "WIN" -> "Bingo Win (${tx.reference})"
+                                        "BET" -> "Room Stake (${tx.reference})"
+                                        "WITHDRAW" -> "Cashout (${tx.paymentMethod})"
+                                        else -> "Deposit via ${tx.paymentMethod}"
+                                    },
+                                    amountEtb = tx.amountEtb.toInt(),
+                                    isCredit = isCredit,
+                                    timestampFormatted = dateStr,
+                                    method = tx.paymentMethod
+                                )
+                            }
+                            _uiState.update { it.copy(transactions = mappedTxs) }
+                        }
                 }
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 _uiState.update { it.copy(notificationMessage = "Firebase sync: ${e.localizedMessage}") }
             }
@@ -1117,8 +1208,14 @@ class BingoViewModel(application: Application) : AndroidViewModel(application) {
         gameJob?.cancel()
         roomSyncJob?.cancel()
         playersJob?.cancel()
+        roomsObserveJob?.cancel()
+        leaderboardObserveJob?.cancel()
+        profileObserveJob?.cancel()
+        transactionsObserveJob?.cancel()
         try {
-            Firebase.auth.signOut()
+            if (AuthManager.isFirebaseInitialized(getApplication())) {
+                Firebase.auth.signOut()
+            }
         } catch (_: Exception) {}
         _uiState.update {
             it.copy(
