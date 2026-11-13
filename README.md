@@ -93,7 +93,7 @@ A complete GitHub Actions workflow is pre-configured at:
 
 ### What the Workflow Does Automatically:
 1. **On Every Push or Pull Request** (to `main` or `master`):
-   - Sets up JDK 17 (Temurin) and restores `debug.keystore` from `debug.keystore.base64`.
+   - Sets up JDK 21 (Temurin) and restores `debug.keystore` from `debug.keystore.base64`.
    - Restores `app/google-services.json` from the `GOOGLE_SERVICES_JSON` repository secret (if configured).
    - Executes unit and Robolectric tests (`ExampleUnitTest`, `ExampleRobolectricTest`).
    - Builds the Android APK (`./gradlew assembleDebug`).
