@@ -49,6 +49,7 @@ fun GameplayScreen(
     currentCard: BingoCard?,
     calledNumbers: List<Int>,
     latestCalledBall: Int?,
+    amharicAnnouncement: String? = null,
     isAutoDaub: Boolean,
     onToggleAutoDaub: () -> Unit,
     onDaubCell: (row: Int, col: Int) -> Unit,
@@ -63,19 +64,67 @@ fun GameplayScreen(
             .padding(horizontal = 14.dp, vertical = 6.dp)
             .testTag("gameplay_screen")
     ) {
-        // Caller Spotlight Strip
-        Row(
+        // Amharic Caller Man Spotlight Strip
+        Column(
             modifier = Modifier
                 .fillMaxWidth()
                 .clip(RoundedCornerShape(16.dp))
                 .background(BgCardElevated)
-                .border(1.dp, BorderColor, RoundedCornerShape(16.dp))
+                .border(1.2.dp, GoldPrimary, RoundedCornerShape(16.dp))
                 .padding(12.dp)
-                .testTag("caller_spotlight_strip"),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
+                .testTag("caller_spotlight_strip")
         ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
+            // Caller Header Row: Avatar, Badge, and Auto-Daub
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(
+                        modifier = Modifier
+                            .size(28.dp)
+                            .clip(CircleShape)
+                            .background(Color(0x33FFC107)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text("👨🏽‍💼", fontSize = 16.sp)
+                    }
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = "የአማርኛ ጠሪ • Amharic Caller (Fast & Clear)",
+                        color = GoldLight,
+                        fontWeight = FontWeight.Black,
+                        fontSize = 11.sp
+                    )
+                }
+
+                // Auto-Daub Button
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(Color(0x3320C997))
+                        .border(1.dp, MintPrimary, RoundedCornerShape(8.dp))
+                        .clickable { onToggleAutoDaub() }
+                        .padding(horizontal = 8.dp, vertical = 4.dp)
+                        .testTag("toggle_auto_daub_button")
+                ) {
+                    Text(
+                        text = "Auto-Daub: ${if (isAutoDaub) "ON" else "OFF"}",
+                        color = MintLight,
+                        fontWeight = FontWeight.ExtraBold,
+                        fontSize = 10.sp
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(10.dp))
+
+            // Main Ball & Callout Display
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
                 // Caller Ball
                 Box(
                     modifier = Modifier
@@ -116,37 +165,32 @@ fun GameplayScreen(
 
                 Spacer(modifier = Modifier.width(12.dp))
 
-                Column {
+                Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text = if (latestCalledBall != null) "BALL $ballLetter-$latestCalledBall CALLED" else "CALLING BALLS...",
+                        text = if (latestCalledBall != null)
+                            "BALL $ballLetter-$latestCalledBall CALLED"
+                        else
+                            "CALLING BALLS...",
                         color = GoldPrimary,
                         fontWeight = FontWeight.Black,
-                        fontSize = 13.sp
+                        fontSize = 12.sp
                     )
+
+                    // Spoken Amharic Callout Text
                     Text(
-                        text = "${calledNumbers.size}/75 Numbers Called",
+                        text = amharicAnnouncement ?: "🎙️ ጨዋታው እየተካሄደ ነው... (Calling live)",
+                        color = MintLight,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 13.sp,
+                        maxLines = 1
+                    )
+
+                    Text(
+                        text = "${calledNumbers.size}/75 Numbers Called • 1-75 Bingo",
                         color = TextSecondary,
-                        fontSize = 11.sp
+                        fontSize = 10.sp
                     )
                 }
-            }
-
-            // Auto-Daub Button
-            Box(
-                modifier = Modifier
-                    .clip(RoundedCornerShape(8.dp))
-                    .background(Color(0x3320C997))
-                    .border(1.dp, MintPrimary, RoundedCornerShape(8.dp))
-                    .clickable { onToggleAutoDaub() }
-                    .padding(horizontal = 10.dp, vertical = 6.dp)
-                    .testTag("toggle_auto_daub_button")
-            ) {
-                Text(
-                    text = "Auto-Daub: ${if (isAutoDaub) "ON" else "OFF"}",
-                    color = MintLight,
-                    fontWeight = FontWeight.ExtraBold,
-                    fontSize = 10.sp
-                )
             }
         }
 

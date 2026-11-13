@@ -65,8 +65,12 @@ fun ProfileScreen(
     transactions: List<TransactionItem>,
     isSoundEnabled: Boolean,
     isVibrationEnabled: Boolean,
+    isAmharicVoiceEnabled: Boolean = true,
+    isFastCallerSpeed: Boolean = true,
     onToggleSound: (Boolean) -> Unit,
     onToggleVibration: (Boolean) -> Unit,
+    onToggleAmharicVoice: (Boolean) -> Unit = {},
+    onToggleFastCallerSpeed: (Boolean) -> Unit = {},
     onDepositClick: () -> Unit,
     onWithdrawClick: () -> Unit,
     onLogout: () -> Unit,
@@ -420,6 +424,72 @@ fun ProfileScreen(
                 Switch(
                     checked = isVibrationEnabled,
                     onCheckedChange = onToggleVibration,
+                    colors = SwitchDefaults.colors(
+                        checkedThumbColor = MintPrimary,
+                        checkedTrackColor = BgSurface,
+                        uncheckedThumbColor = TextSecondary,
+                        uncheckedTrackColor = BgDark
+                    )
+                )
+            }
+
+            Spacer(modifier = Modifier.height(6.dp))
+
+            // Amharic Caller Man Switch
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column {
+                    Text(
+                        text = "Amharic Caller Man (የአማርኛ ጠሪ)",
+                        color = GoldPrimary,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        text = "Clear male voice announces 1-75 B-I-N-G-O",
+                        color = TextSecondary,
+                        fontSize = 10.sp
+                    )
+                }
+                Switch(
+                    checked = isAmharicVoiceEnabled,
+                    onCheckedChange = onToggleAmharicVoice,
+                    colors = SwitchDefaults.colors(
+                        checkedThumbColor = GoldPrimary,
+                        checkedTrackColor = BgSurface,
+                        uncheckedThumbColor = TextSecondary,
+                        uncheckedTrackColor = BgDark
+                    )
+                )
+            }
+
+            Spacer(modifier = Modifier.height(6.dp))
+
+            // Fast Calling Speed Switch
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column {
+                    Text(
+                        text = "Fast Caller Speed (ፈጣን አጠራር)",
+                        color = MintLight,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        text = "1.35x brisk caller cadence for live rooms",
+                        color = TextSecondary,
+                        fontSize = 10.sp
+                    )
+                }
+                Switch(
+                    checked = isFastCallerSpeed,
+                    onCheckedChange = onToggleFastCallerSpeed,
                     colors = SwitchDefaults.colors(
                         checkedThumbColor = MintPrimary,
                         checkedTrackColor = BgSurface,

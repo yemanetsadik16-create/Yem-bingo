@@ -137,4 +137,26 @@ class ExampleUnitTest {
         assertEquals(10, cbeFee)
         assertEquals(990, netReceived)
     }
+
+    @Test
+    fun testAmharicCallerAll75Balls() {
+        for (ball in 1..75) {
+            val callout = com.example.sound.AmharicCaller.getCallout(ball)
+            assertTrue("Amharic letter missing for $ball", callout.amharicLetter.isNotBlank())
+            assertTrue("Amharic number word missing for $ball", callout.amharicNumberWord.isNotBlank())
+            assertTrue("Phonetic word missing for $ball", callout.phoneticNumberWord.isNotBlank())
+        }
+
+        val b1 = com.example.sound.AmharicCaller.getCallout(1)
+        assertEquals("ቢ", b1.amharicLetter)
+        assertEquals("አንድ", b1.amharicNumberWord)
+
+        val n42 = com.example.sound.AmharicCaller.getCallout(42)
+        assertEquals("ኤን", n42.amharicLetter)
+        assertEquals("አርባ ሁለት", n42.amharicNumberWord)
+
+        val o75 = com.example.sound.AmharicCaller.getCallout(75)
+        assertEquals("ኦ", o75.amharicLetter)
+        assertEquals("ሰባ አምስት", o75.amharicNumberWord)
+    }
 }

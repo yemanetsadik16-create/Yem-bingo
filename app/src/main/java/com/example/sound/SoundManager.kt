@@ -11,8 +11,22 @@ import android.util.Log
 
 class SoundManager(private val context: Context) {
     private var toneGenerator: ToneGenerator? = null
+    val amharicCaller: AmharicCaller = AmharicCaller(context)
+
     var isSoundEnabled: Boolean = true
     var isVibrationEnabled: Boolean = true
+    var isAmharicVoiceEnabled: Boolean
+        get() = amharicCaller.isVoiceEnabled
+        set(value) {
+            amharicCaller.isVoiceEnabled = value
+        }
+
+    var isFastCallerSpeed: Boolean
+        get() = amharicCaller.isFastSpeed
+        set(value) {
+            amharicCaller.isFastSpeed = value
+            amharicCaller.applyVoiceProfile()
+        }
 
     private val vibrator: Vibrator? by lazy {
         try {
@@ -37,12 +51,14 @@ class SoundManager(private val context: Context) {
         }
     }
 
-    fun playBallCall() {
+    fun playBallCall(ball: Int? = null) {
         if (!isSoundEnabled) return
         try {
-            toneGenerator?.startTone(ToneGenerator.TONE_PROP_BEEP, 80)
-        } catch (e: Exception) {
-            // Ignore
+            toneGenerator?.startTone(ToneGenerator.TONE_PROP_BEEP, 70)
+        } catch (_: Exception) {}
+
+        if (ball != null && isAmharicVoiceEnabled) {
+            amharicCaller.callBall(ball)
         }
     }
 
@@ -53,9 +69,7 @@ class SoundManager(private val context: Context) {
         if (!isSoundEnabled) return
         try {
             toneGenerator?.startTone(ToneGenerator.TONE_PROP_ACK, 60)
-        } catch (e: Exception) {
-            // Ignore
-        }
+        } catch (_: Exception) {}
     }
 
     fun playWin() {
@@ -64,9 +78,17 @@ class SoundManager(private val context: Context) {
         }
         if (!isSoundEnabled) return
         try {
-            toneGenerator?.startTone(ToneGenerator.TONE_CDMA_ALERT_CALL_GUARD, 500)
-        } catch (e: Exception) {
-            // Ignore
+            toneGenerator?.startTone(ToneGenerator.TONE_CDMA_ALERT_CALL_GUARD, 400)
+        } catch (_: Exception) {}
+
+        if (isAmharicVoiceEnabled) {
+            amharicCaller.callWin()
+        }
+    }
+
+    fun playRoundStart() {
+        if (isAmharicVoiceEnabled) {
+            amharicCaller.callRoundStart()
         }
     }
 
@@ -84,9 +106,7 @@ class SoundManager(private val context: Context) {
                 @Suppress("DEPRECATION")
                 vibrator?.vibrate(durationMs)
             }
-        } catch (e: Exception) {
-            // Ignore vibration exceptions on unsupported devices
-        }
+        } catch (_: Exception) {}
     }
 
     private fun vibratePattern(pattern: LongArray) {
@@ -97,17 +117,14 @@ class SoundManager(private val context: Context) {
                 @Suppress("DEPRECATION")
                 vibrator?.vibrate(pattern, -1)
             }
-        } catch (e: Exception) {
-            // Ignore
-        }
+        } catch (_: Exception) {}
     }
 
     fun release() {
         try {
             toneGenerator?.release()
             toneGenerator = null
-        } catch (e: Exception) {
-            // Ignore
-        }
+            amharicCaller.release()
+        } catch (_: Exception) {}
     }
 }

@@ -67,8 +67,13 @@ data class BingoUiState(
     val currentCard: BingoCard? = null,
     val calledNumbers: List<Int> = emptyList(),
     val latestCalledBall: Int? = null,
+    val latestAmharicAnnouncement: String? = null,
     val isAutoDaub: Boolean = true,
     val isCalling: Boolean = false,
+    val isSoundEnabled: Boolean = true,
+    val isVibrationEnabled: Boolean = true,
+    val isAmharicVoiceEnabled: Boolean = true,
+    val isFastCallerSpeed: Boolean = true,
     val activeRoomPlayers: List<FirestoreRoomPlayer> = emptyList(),
     val winCelebration: WinCelebrationData? = null,
     val showDepositModal: Boolean = false,
@@ -486,12 +491,13 @@ class BingoViewModel(application: Application) : AndroidViewModel(application) {
                 playView = PlayView.GAMEPLAY,
                 calledNumbers = emptyList(),
                 latestCalledBall = null,
+                latestAmharicAnnouncement = null,
                 isCalling = true,
                 winCelebration = null
             )
         }
 
-        soundManager.playButtonTap()
+        soundManager.playRoundStart()
 
         if (user != null) {
             viewModelScope.launch {
@@ -573,7 +579,8 @@ class BingoViewModel(application: Application) : AndroidViewModel(application) {
             val calledSoFar = mutableListOf<Long>()
 
             while (isActive && poolNumbers.isNotEmpty()) {
-                delay(2400) // 2.4 seconds per ball call
+                val intervalMs = if (_uiState.value.isFastCallerSpeed) 1800L else 2600L
+                delay(intervalMs) // Fast or standard caller cadence
 
                 // The host device pushes the next ball to Firestore
                 val players = _uiState.value.activeRoomPlayers
@@ -601,7 +608,8 @@ class BingoViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun handleNextBallCalled(ball: Int) {
-        soundManager.playBallCall()
+        val callout = com.example.sound.AmharicCaller.getCallout(ball)
+        soundManager.playBallCall(ball)
 
         _uiState.update { state ->
             val updatedCalled = state.calledNumbers + ball
@@ -629,6 +637,7 @@ class BingoViewModel(application: Application) : AndroidViewModel(application) {
             state.copy(
                 calledNumbers = updatedCalled,
                 latestCalledBall = ball,
+                latestAmharicAnnouncement = callout.amharicDisplayText,
                 currentCard = updatedCard
             )
         }
@@ -1121,6 +1130,26 @@ class BingoViewModel(application: Application) : AndroidViewModel(application) {
                 notificationMessage = "Logged out successfully"
             )
         }
+    }
+
+    fun setSoundEnabled(enabled: Boolean) {
+        soundManager.isSoundEnabled = enabled
+        _uiState.update { it.copy(isSoundEnabled = enabled) }
+    }
+
+    fun setVibrationEnabled(enabled: Boolean) {
+        soundManager.isVibrationEnabled = enabled
+        _uiState.update { it.copy(isVibrationEnabled = enabled) }
+    }
+
+    fun setAmharicVoiceEnabled(enabled: Boolean) {
+        soundManager.isAmharicVoiceEnabled = enabled
+        _uiState.update { it.copy(isAmharicVoiceEnabled = enabled) }
+    }
+
+    fun setFastCallerSpeed(fast: Boolean) {
+        soundManager.isFastCallerSpeed = fast
+        _uiState.update { it.copy(isFastCallerSpeed = fast) }
     }
 
     fun clearNotification() {
