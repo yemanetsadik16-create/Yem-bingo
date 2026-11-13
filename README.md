@@ -93,17 +93,22 @@ A complete GitHub Actions workflow is pre-configured at:
 
 ### What the Workflow Does Automatically:
 1. **On Every Push or Pull Request** (to `main` or `master`):
-   - Sets up JDK 17 (Temurin).
-   - Validates project dependencies and Gradle wrapper.
-   - Executes all unit tests (`./gradlew testDebugUnitTest`).
+   - Sets up JDK 17 (Temurin) and restores `debug.keystore` from `debug.keystore.base64`.
+   - Restores `app/google-services.json` from the `GOOGLE_SERVICES_JSON` repository secret (if configured).
+   - Executes unit and Robolectric tests (`ExampleUnitTest`, `ExampleRobolectricTest`).
    - Builds the Android APK (`./gradlew assembleDebug`).
    - Uploads the APK as a downloadable workflow artifact (`YemBingo-Debug-APK`) accessible under the GitHub Actions tab.
 
-2. **On Git Tag Push (e.g., `v1.0.0`)**:
+2. **Enabling Full Firebase & Google Sign-In in CI Builds**:
+   - In your GitHub repository, open **Settings -> Secrets and variables -> Actions -> New repository secret**.
+   - Name: `GOOGLE_SERVICES_JSON`
+   - Value: Paste the full JSON contents of your `app/google-services.json` file.
+
+3. **On Git Tag Push (e.g., `v1.0.0`)**:
    - Automatically builds the APK and creates a new **GitHub Release**.
    - Attaches `YemBingo-v1.0-debug.apk` directly to the release page for user download.
 
-3. **Manual Run (`workflow_dispatch`)**:
+4. **Manual Run (`workflow_dispatch`)**:
    - Go to your repository on GitHub -> **Actions** tab -> **Build and Publish Android APK** -> **Run workflow**.
 
 ### How to Publish to Your GitHub:
