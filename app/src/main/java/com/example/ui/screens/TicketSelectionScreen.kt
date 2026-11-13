@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
@@ -49,10 +50,11 @@ fun TicketSelectionScreen(
     room: Room,
     selectedTicketNumber: Int,
     card: BingoCard?,
+    isJoined: Boolean,
     onBackToLobby: () -> Unit,
     onSelectTicket: (Int) -> Unit,
     onRefreshCard: () -> Unit,
-    onStartGame: () -> Unit,
+    onJoinGame: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     Column(
@@ -67,7 +69,7 @@ fun TicketSelectionScreen(
                 .fillMaxWidth()
                 .clip(RoundedCornerShape(16.dp))
                 .background(BgCardElevated)
-                .border(1.dp, BorderColor, RoundedCornerShape(16.dp))
+                .border(1.dp, if (isJoined) MintPrimary else BorderColor, RoundedCornerShape(16.dp))
                 .padding(12.dp)
         ) {
             Row(
@@ -82,19 +84,37 @@ fun TicketSelectionScreen(
                     fontSize = 13.sp,
                     modifier = Modifier
                         .clickable { onBackToLobby() }
-                        .padding(4.dp)
+                        .padding(vertical = 8.dp, horizontal = 4.dp)
                         .testTag("back_to_lobby_button")
                 )
 
-                Text(
-                    text = "${room.name} (${room.stakeEtb} ETB)",
-                    color = GoldPrimary,
-                    fontWeight = FontWeight.ExtraBold,
-                    fontSize = 13.sp
-                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = "${room.name} (${room.stakeEtb} ETB)",
+                        color = GoldPrimary,
+                        fontWeight = FontWeight.ExtraBold,
+                        fontSize = 13.sp
+                    )
+                    if (isJoined) {
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(6.dp))
+                                .background(MintPrimary)
+                                .padding(horizontal = 6.dp, vertical = 2.dp)
+                        ) {
+                            Text(
+                                text = "✓ JOINED",
+                                color = BgDark,
+                                fontWeight = FontWeight.Black,
+                                fontSize = 10.sp
+                            )
+                        }
+                    }
+                }
 
                 Text(
-                    text = "Selected #$selectedTicketNumber",
+                    text = "#$selectedTicketNumber",
                     color = MintPrimary,
                     fontWeight = FontWeight.ExtraBold,
                     fontSize = 12.sp
@@ -144,13 +164,17 @@ fun TicketSelectionScreen(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = "⏳ Auto-Start: $timerText",
+                    text = "⏳ Starts in: $timerText",
                     color = GoldPrimary,
                     fontSize = 11.sp,
                     fontWeight = FontWeight.Black
                 )
                 Text(
-                    text = if (room.currentPlayers >= 2) "✓ ${room.currentPlayers} Players (Min 2 Met)" else "⚠️ Waiting (Need 2+ Players)",
+                    text = if (room.currentPlayers >= 2) {
+                        "👥 ${room.currentPlayers} Joined (2+ Ready)"
+                    } else {
+                        "👥 ${room.currentPlayers} Joined (Need 2+)"
+                    },
                     color = if (room.currentPlayers >= 2) MintLight else Color(0xFFFF8A65),
                     fontSize = 10.sp,
                     fontWeight = FontWeight.Bold
@@ -171,7 +195,7 @@ fun TicketSelectionScreen(
                     Box(
                         modifier = Modifier
                             .width(58.dp)
-                            .height(36.dp)
+                            .height(40.dp)
                             .clip(RoundedCornerShape(8.dp))
                             .background(
                                 if (isSelected) {
@@ -185,7 +209,7 @@ fun TicketSelectionScreen(
                                 color = if (isSelected) Color.White else BorderColor,
                                 shape = RoundedCornerShape(8.dp)
                             )
-                            .clickable { onSelectTicket(ticketNum) }
+                            .clickable(enabled = !isJoined) { onSelectTicket(ticketNum) }
                             .testTag("ticket_chip_$ticketNum"),
                         contentAlignment = Alignment.Center
                     ) {
@@ -212,7 +236,7 @@ fun TicketSelectionScreen(
 
         Spacer(modifier = Modifier.height(14.dp))
 
-        // Action Buttons: Refresh & Start
+        // Action Buttons: Refresh & Join Game
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -220,38 +244,46 @@ fun TicketSelectionScreen(
         ) {
             OutlinedButton(
                 onClick = onRefreshCard,
+                enabled = !isJoined,
                 modifier = Modifier
                     .weight(1f)
-                    .height(44.dp)
+                    .heightIn(min = 48.dp)
                     .testTag("refresh_card_button"),
                 shape = RoundedCornerShape(10.dp),
                 colors = ButtonDefaults.outlinedButtonColors(
                     containerColor = BgCard,
-                    contentColor = GoldPrimary
+                    contentColor = GoldPrimary,
+                    disabledContainerColor = BgSurface,
+                    disabledContentColor = TextSecondary
                 ),
-                border = androidx.compose.foundation.BorderStroke(1.dp, GoldPrimary)
+                border = androidx.compose.foundation.BorderStroke(
+                    1.dp,
+                    if (isJoined) BorderColor else GoldPrimary
+                )
             ) {
                 Text(
-                    text = "↻ Refresh",
+                    text = if (isJoined) "✓ Locked" else "↻ Refresh",
                     fontWeight = FontWeight.Bold,
                     fontSize = 13.sp
                 )
             }
 
             Button(
-                onClick = onStartGame,
+                onClick = onJoinGame,
                 modifier = Modifier
                     .weight(2f)
-                    .height(44.dp)
-                    .testTag("start_game_button"),
+                    .heightIn(min = 48.dp)
+                    .testTag("join_game_button"),
                 shape = RoundedCornerShape(10.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = OrangeDynamic)
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = if (isJoined) MintPrimary else OrangeDynamic
+                )
             ) {
                 Text(
-                    text = "▶ START GAME (${room.stakeEtb} ETB)",
+                    text = if (isJoined) "✓ JOINED • LOBBY" else "JOIN GAME (${room.stakeEtb} ETB)",
                     fontWeight = FontWeight.ExtraBold,
                     fontSize = 13.sp,
-                    color = Color.White
+                    color = if (isJoined) BgDark else Color.White
                 )
             }
         }

@@ -15,8 +15,15 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.VolumeOff
+import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.Slider
+import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -26,6 +33,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.model.BingoCard
@@ -40,9 +48,10 @@ import com.example.ui.theme.GoldPrimary
 import com.example.ui.theme.MintLight
 import com.example.ui.theme.MintPrimary
 import com.example.ui.theme.OrangeDynamic
+import com.example.ui.theme.TextPrimary
 import com.example.ui.theme.TextSecondary
-
 import com.example.viewmodel.BingoViewModel
+import kotlin.math.roundToInt
 
 @Composable
 fun GameplayScreen(
@@ -51,6 +60,13 @@ fun GameplayScreen(
     latestCalledBall: Int?,
     amharicAnnouncement: String? = null,
     isAutoDaub: Boolean,
+    isCallerMuted: Boolean = false,
+    callerVolume: Float = 0.9f,
+    nextBallCountdownSeconds: Int = 6,
+    callerStatusText: String = "Amharic Caller Man (Iapetus)",
+    amharicVoiceError: String? = null,
+    onToggleCallerMute: () -> Unit = {},
+    onCallerVolumeChange: (Float) -> Unit = {},
     onToggleAutoDaub: () -> Unit,
     onDaubCell: (row: Int, col: Int) -> Unit,
     onExitGame: () -> Unit,
@@ -74,13 +90,16 @@ fun GameplayScreen(
                 .padding(12.dp)
                 .testTag("caller_spotlight_strip")
         ) {
-            // Caller Header Row: Avatar, Badge, and Auto-Daub
+            // Caller Header Row: Avatar, Title, 6s Timer Pill, and Auto-Daub
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.weight(1f)
+                ) {
                     Box(
                         modifier = Modifier
                             .size(28.dp)
@@ -88,16 +107,48 @@ fun GameplayScreen(
                             .background(Color(0x33FFC107)),
                         contentAlignment = Alignment.Center
                     ) {
-                        Text("👨🏽‍💼", fontSize = 16.sp)
+                        Text("🎙️", fontSize = 15.sp)
                     }
                     Spacer(modifier = Modifier.width(6.dp))
+                    Column {
+                        Text(
+                            text = "የአማርኛ ጠሪ • Live Caller",
+                            color = GoldLight,
+                            fontWeight = FontWeight.Black,
+                            fontSize = 11.sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Text(
+                            text = callerStatusText,
+                            color = TextSecondary,
+                            fontSize = 9.sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.width(6.dp))
+
+                // 6-Second Interval Countdown Pill
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(Color(0x33FFC107))
+                        .border(1.dp, GoldPrimary, RoundedCornerShape(8.dp))
+                        .padding(horizontal = 7.dp, vertical = 4.dp)
+                        .testTag("next_ball_timer_pill")
+                ) {
                     Text(
-                        text = "የአማርኛ ጠሪ • Amharic Caller (Fast & Clear)",
+                        text = "⏱ ${nextBallCountdownSeconds}s / 6s",
                         color = GoldLight,
                         fontWeight = FontWeight.Black,
-                        fontSize = 11.sp
+                        fontSize = 10.sp
                     )
                 }
+
+                Spacer(modifier = Modifier.width(6.dp))
 
                 // Auto-Daub Button
                 Box(
@@ -110,7 +161,7 @@ fun GameplayScreen(
                         .testTag("toggle_auto_daub_button")
                 ) {
                     Text(
-                        text = "Auto-Daub: ${if (isAutoDaub) "ON" else "OFF"}",
+                        text = "Auto: ${if (isAutoDaub) "ON" else "OFF"}",
                         color = MintLight,
                         fontWeight = FontWeight.ExtraBold,
                         fontSize = 10.sp
@@ -170,7 +221,7 @@ fun GameplayScreen(
                         text = if (latestCalledBall != null)
                             "BALL $ballLetter-$latestCalledBall CALLED"
                         else
-                            "CALLING BALLS...",
+                            "STARTING ROUND • PRE-FETCHING VOICE...",
                         color = GoldPrimary,
                         fontWeight = FontWeight.Black,
                         fontSize = 12.sp
@@ -178,19 +229,90 @@ fun GameplayScreen(
 
                     // Spoken Amharic Callout Text
                     Text(
-                        text = amharicAnnouncement ?: "🎙️ ጨዋታው እየተካሄደ ነው... (Calling live)",
+                        text = amharicAnnouncement ?: "ጨዋታው ተጀምሯል! መልካም ዕድል!",
                         color = MintLight,
                         fontWeight = FontWeight.Bold,
                         fontSize = 13.sp,
-                        maxLines = 1
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
                     )
 
                     Text(
-                        text = "${calledNumbers.size}/75 Numbers Called • 1-75 Bingo",
+                        text = "${calledNumbers.size}/75 Numbers Called • Strict 6s Interval",
                         color = TextSecondary,
                         fontSize = 10.sp
                     )
                 }
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            // Audio Controls Bar: Mute/Unmute Toggle + Volume Slider
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(BgDark)
+                    .border(1.dp, BorderColor, RoundedCornerShape(10.dp))
+                    .padding(horizontal = 6.dp, vertical = 2.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                IconButton(
+                    onClick = onToggleCallerMute,
+                    modifier = Modifier
+                        .size(48.dp)
+                        .testTag("caller_mute_toggle_button")
+                ) {
+                    Icon(
+                        imageVector = if (isCallerMuted)
+                            Icons.AutoMirrored.Filled.VolumeOff
+                        else
+                            Icons.AutoMirrored.Filled.VolumeUp,
+                        contentDescription = if (isCallerMuted) "Unmute Amharic Caller" else "Mute Amharic Caller",
+                        tint = if (isCallerMuted) OrangeDynamic else MintLight
+                    )
+                }
+
+                Text(
+                    text = if (isCallerMuted) "MUTED" else "VOL",
+                    color = if (isCallerMuted) OrangeDynamic else TextPrimary,
+                    fontWeight = FontWeight.Black,
+                    fontSize = 10.sp,
+                    modifier = Modifier.width(38.dp)
+                )
+
+                Slider(
+                    value = if (isCallerMuted) 0f else callerVolume,
+                    onValueChange = onCallerVolumeChange,
+                    valueRange = 0f..1f,
+                    modifier = Modifier
+                        .weight(1f)
+                        .testTag("caller_volume_slider"),
+                    colors = SliderDefaults.colors(
+                        thumbColor = GoldPrimary,
+                        activeTrackColor = MintPrimary,
+                        inactiveTrackColor = BorderColor
+                    )
+                )
+
+                Text(
+                    text = "${((if (isCallerMuted) 0f else callerVolume) * 100).roundToInt()}%",
+                    color = GoldLight,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 10.sp,
+                    modifier = Modifier.padding(end = 8.dp)
+                )
+            }
+
+            if (!amharicVoiceError.isNullOrBlank()) {
+                Text(
+                    text = amharicVoiceError,
+                    color = OrangeDynamic,
+                    fontSize = 10.sp,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.padding(top = 4.dp, start = 4.dp)
+                )
             }
         }
 

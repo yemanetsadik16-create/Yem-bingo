@@ -262,13 +262,64 @@ class FirestoreRepository(val db: FirebaseFirestore) {
         )
 
         try {
+            val alreadyJoined = try {
+                playerRef.get().await().exists()
+            } catch (_: Exception) {
+                false
+            }
+
             playerRef.set(playerPayload).await()
 
-            // Update room pool and player count
             val roomDoc = roomRef.get().await()
             if (roomDoc.exists()) {
-                val currentP = (roomDoc.getLong("currentPlayers") ?: 0L) + 1L
-                val currentPool = (roomDoc.getLong("totalPoolEtb") ?: 0L) + stakeEtb.toLong()
+                val roomStatus = roomDoc.getString("status") ?: "COUNTDOWN"
+                val basePlayers = if (roomStatus == "FINISHED") 0L else (roomDoc.getLong("currentPlayers") ?: 0L)
+                val basePool = if (roomStatus == "FINISHED") 0L else (roomDoc.getLong("totalPoolEtb") ?: 0L)
+
+                if (!alreadyJoined || roomStatus == "FINISHED") {
+                    val currentP = basePlayers + 1L
+                    val currentPool = basePool + stakeEtb.toLong()
+                    val prize = (currentPool * 80L) / 100L
+                    val house = (currentPool * 20L) / 100L
+                    val updates = mutableMapOf<String, Any>(
+                        "currentPlayers" to currentP,
+                        "totalPoolEtb" to currentPool,
+                        "prizeEtb" to prize,
+                        "houseCommissionEtb" to house,
+                        "updatedAt" to FieldValue.serverTimestamp()
+                    )
+                    if (roomStatus == "FINISHED") {
+                        updates["status"] = "COUNTDOWN"
+                        updates["countdownSeconds"] = 180L
+                        updates["calledNumbers"] = emptyList<Long>()
+                        updates["latestBall"] = 0L
+                        updates["winnerId"] = ""
+                        updates["winnerName"] = ""
+                    }
+                    roomRef.update(updates).await()
+                }
+            }
+        } catch (e: Exception) {
+            handleFirestoreError(e, OperationType.WRITE, playerRef.path)
+            throw e
+        }
+    }
+
+    suspend fun leaveRoom(roomId: String, userId: String, stakeEtb: Int = 0) {
+        val uid = requireUserId()
+        require(uid == userId) { "Unauthorized room leave" }
+        val playerRef = db.collection("rooms").document(roomId).collection("players").document(uid)
+        val roomRef = db.collection("rooms").document(roomId)
+
+        try {
+            val existing = playerRef.get().await().exists()
+            if (!existing) return
+
+            playerRef.delete().await()
+            val roomDoc = roomRef.get().await()
+            if (roomDoc.exists()) {
+                val currentP = ((roomDoc.getLong("currentPlayers") ?: 1L) - 1L).coerceAtLeast(0L)
+                val currentPool = ((roomDoc.getLong("totalPoolEtb") ?: 0L) - stakeEtb.toLong()).coerceAtLeast(0L)
                 val prize = (currentPool * 80L) / 100L
                 val house = (currentPool * 20L) / 100L
                 roomRef.update(
@@ -277,30 +328,6 @@ class FirestoreRepository(val db: FirebaseFirestore) {
                         "totalPoolEtb" to currentPool,
                         "prizeEtb" to prize,
                         "houseCommissionEtb" to house,
-                        "updatedAt" to FieldValue.serverTimestamp()
-                    )
-                ).await()
-            }
-        } catch (e: Exception) {
-            handleFirestoreError(e, OperationType.WRITE, playerRef.path)
-            throw e
-        }
-    }
-
-    suspend fun leaveRoom(roomId: String, userId: String) {
-        val uid = requireUserId()
-        require(uid == userId) { "Unauthorized room leave" }
-        val playerRef = db.collection("rooms").document(roomId).collection("players").document(uid)
-        val roomRef = db.collection("rooms").document(roomId)
-
-        try {
-            playerRef.delete().await()
-            val roomDoc = roomRef.get().await()
-            if (roomDoc.exists()) {
-                val currentP = (roomDoc.getLong("currentPlayers") ?: 1L) - 1L
-                roomRef.update(
-                    mapOf(
-                        "currentPlayers" to if (currentP >= 0L) currentP else 0L,
                         "updatedAt" to FieldValue.serverTimestamp()
                     )
                 ).await()
@@ -325,6 +352,25 @@ class FirestoreRepository(val db: FirebaseFirestore) {
                     "status" to status,
                     "calledNumbers" to calledNumbers,
                     "latestBall" to latestBall,
+                    "updatedAt" to FieldValue.serverTimestamp()
+                )
+            ).await()
+        } catch (e: Exception) {
+            handleFirestoreError(e, OperationType.UPDATE, roomRef.path)
+        }
+    }
+
+    suspend fun resetRoomForNewRound(roomId: String) {
+        val roomRef = db.collection("rooms").document(roomId)
+        try {
+            roomRef.update(
+                mapOf(
+                    "countdownSeconds" to 0L,
+                    "status" to "IN_PROGRESS",
+                    "calledNumbers" to emptyList<Long>(),
+                    "latestBall" to 0L,
+                    "winnerId" to "",
+                    "winnerName" to "",
                     "updatedAt" to FieldValue.serverTimestamp()
                 )
             ).await()

@@ -1,5 +1,6 @@
 package com.example
 
+import android.media.AudioManager
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
@@ -47,10 +48,14 @@ import kotlinx.coroutines.launch
 
 import androidx.credentials.CredentialManager
 import com.example.data.AuthManager
+import com.example.data.configureAppCheck
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        volumeControlStream = AudioManager.STREAM_MUSIC
+        // Configure Firebase App Check before Compose UI, ViewModels, or any Firebase calls
+        configureAppCheck(this, intent)
         enableEdgeToEdge()
         setContent {
             MyApplicationTheme {
@@ -194,9 +199,11 @@ fun YemBingoApp(
                                 PlayView.LOBBY -> {
                                     LobbyScreen(
                                         rooms = uiState.rooms,
+                                        joinedRoomIds = uiState.joinedRoomIds,
                                         isDailyClaimed = uiState.userProfile.isDailyClaimed,
                                         onClaimReward = { viewModel.claimDailyReward() },
-                                        onSelectRoom = { room -> viewModel.enterTicketSelection(room) }
+                                        onSelectRoom = { room -> viewModel.enterTicketSelection(room) },
+                                        onLeaveRoom = { roomId -> viewModel.leaveJoinedRoom(roomId) }
                                     )
                                 }
                                 PlayView.TICKET_SELECTION -> {
@@ -205,10 +212,11 @@ fun YemBingoApp(
                                             room = room,
                                             selectedTicketNumber = uiState.selectedTicketNumber,
                                             card = uiState.currentCard,
+                                            isJoined = uiState.isSelectedRoomJoined,
                                             onBackToLobby = { viewModel.backToLobby() },
                                             onSelectTicket = { num -> viewModel.selectTicket(num) },
                                             onRefreshCard = { viewModel.refreshCard() },
-                                            onStartGame = { viewModel.startLiveGame() }
+                                            onJoinGame = { viewModel.joinRoomGame() }
                                         )
                                     }
                                 }
@@ -219,6 +227,13 @@ fun YemBingoApp(
                                         latestCalledBall = uiState.latestCalledBall,
                                         amharicAnnouncement = uiState.latestAmharicAnnouncement,
                                         isAutoDaub = uiState.isAutoDaub,
+                                        isCallerMuted = uiState.isCallerMuted,
+                                        callerVolume = uiState.callerVolume,
+                                        nextBallCountdownSeconds = uiState.nextBallCountdownSeconds,
+                                        callerStatusText = uiState.callerStatusText,
+                                        amharicVoiceError = uiState.amharicVoiceError,
+                                        onToggleCallerMute = { viewModel.toggleCallerMute() },
+                                        onCallerVolumeChange = { viewModel.setCallerVolume(it) },
                                         onToggleAutoDaub = { viewModel.toggleAutoDaub() },
                                         onDaubCell = { r, c -> viewModel.daubCell(r, c) },
                                         onExitGame = { viewModel.backToLobby() }
@@ -244,10 +259,13 @@ fun YemBingoApp(
                                 isVibrationEnabled = uiState.isVibrationEnabled,
                                 isAmharicVoiceEnabled = uiState.isAmharicVoiceEnabled,
                                 isFastCallerSpeed = uiState.isFastCallerSpeed,
+                                callerVoiceProfile = uiState.callerVoiceProfile,
                                 onToggleSound = { viewModel.setSoundEnabled(it) },
                                 onToggleVibration = { viewModel.setVibrationEnabled(it) },
                                 onToggleAmharicVoice = { viewModel.setAmharicVoiceEnabled(it) },
                                 onToggleFastCallerSpeed = { viewModel.setFastCallerSpeed(it) },
+                                onSelectVoiceProfile = { viewModel.setCallerVoiceProfile(it) },
+                                onPreviewVoice = { viewModel.previewAmharicVoice() },
                                 onDepositClick = { viewModel.openDepositModal() },
                                 onWithdrawClick = { viewModel.openWithdrawModal() },
                                 onLogout = { viewModel.logout() }

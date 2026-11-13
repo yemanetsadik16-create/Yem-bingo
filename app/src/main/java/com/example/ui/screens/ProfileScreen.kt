@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -67,10 +68,13 @@ fun ProfileScreen(
     isVibrationEnabled: Boolean,
     isAmharicVoiceEnabled: Boolean = true,
     isFastCallerSpeed: Boolean = true,
+    callerVoiceProfile: String = "Iapetus",
     onToggleSound: (Boolean) -> Unit,
     onToggleVibration: (Boolean) -> Unit,
     onToggleAmharicVoice: (Boolean) -> Unit = {},
     onToggleFastCallerSpeed: (Boolean) -> Unit = {},
+    onSelectVoiceProfile: (String) -> Unit = {},
+    onPreviewVoice: () -> Unit = {},
     onDepositClick: () -> Unit,
     onWithdrawClick: () -> Unit,
     onLogout: () -> Unit,
@@ -449,7 +453,7 @@ fun ProfileScreen(
                         fontWeight = FontWeight.Bold
                     )
                     Text(
-                        text = "Clear male voice announces 1-75 B-I-N-G-O",
+                        text = "Clear male Addis Ababa voice • 6s interval",
                         color = TextSecondary,
                         fontSize = 10.sp
                     )
@@ -468,7 +472,7 @@ fun ProfileScreen(
 
             Spacer(modifier = Modifier.height(6.dp))
 
-            // Fast Calling Speed Switch
+            // Energetic Delivery Switch
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -476,13 +480,13 @@ fun ProfileScreen(
             ) {
                 Column {
                     Text(
-                        text = "Fast Caller Speed (ፈጣን አጠራር)",
+                        text = "Upbeat Host Delivery (ፈጣን እና ግልጽ)",
                         color = MintLight,
                         fontSize = 13.sp,
                         fontWeight = FontWeight.Bold
                     )
                     Text(
-                        text = "1.35x brisk caller cadence for live rooms",
+                        text = "Lively Ethiopian game-show host cadence (<=3.5s clips)",
                         color = TextSecondary,
                         fontSize = 10.sp
                     )
@@ -497,6 +501,79 @@ fun ProfileScreen(
                         uncheckedTrackColor = BgDark
                     )
                 )
+            }
+
+            Spacer(modifier = Modifier.height(10.dp))
+
+            // Voice Profile Selector & Live Preview
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "Voice Style",
+                    color = TextPrimary,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold
+                )
+                Box(
+                    modifier = Modifier
+                        .heightIn(min = 48.dp)
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(Color(0x33FFC107))
+                        .border(1.dp, GoldPrimary, RoundedCornerShape(8.dp))
+                        .clickable { onPreviewVoice() }
+                        .padding(horizontal = 12.dp, vertical = 8.dp)
+                        .testTag("preview_amharic_voice_button"),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = "🎙️ Test Voice",
+                        color = GoldLight,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.ExtraBold
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                val voices = listOf(
+                    "Iapetus" to "Iapetus • Clear",
+                    "Orus" to "Orus • Firm",
+                    "Charon" to "Charon • Deep"
+                )
+                voices.forEach { (id, label) ->
+                    val isSelected = callerVoiceProfile == id
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .heightIn(min = 48.dp)
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(if (isSelected) Color(0x3320C997) else BgDark)
+                            .border(
+                                1.dp,
+                                if (isSelected) MintPrimary else BorderColor,
+                                RoundedCornerShape(8.dp)
+                            )
+                            .clickable { onSelectVoiceProfile(id) }
+                            .padding(horizontal = 6.dp, vertical = 8.dp)
+                            .testTag("voice_profile_${id.lowercase()}"),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = label,
+                            color = if (isSelected) MintLight else TextSecondary,
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
             }
         }
 

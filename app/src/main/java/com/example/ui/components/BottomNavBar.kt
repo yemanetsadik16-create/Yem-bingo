@@ -7,7 +7,8 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -41,10 +42,11 @@ fun BottomNavBar(
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .height(68.dp)
             .background(Color(0xF20A2229))
             .border(width = 1.dp, color = BorderColor)
-            .padding(horizontal = 8.dp),
+            .navigationBarsPadding()
+            .heightIn(min = 64.dp)
+            .padding(horizontal = 8.dp, vertical = 4.dp),
         horizontalArrangement = Arrangement.SpaceAround,
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -87,6 +89,7 @@ private fun NavItem(
             .testTag(testTag)
             .clip(RoundedCornerShape(12.dp))
             .clickable { onClick() }
+            .heightIn(min = 48.dp)
             .padding(horizontal = 14.dp, vertical = 6.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center

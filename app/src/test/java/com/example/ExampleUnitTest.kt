@@ -147,16 +147,88 @@ class ExampleUnitTest {
             assertTrue("Phonetic word missing for $ball", callout.phoneticNumberWord.isNotBlank())
         }
 
-        val b1 = com.example.sound.AmharicCaller.getCallout(1)
-        assertEquals("ቢ", b1.amharicLetter)
-        assertEquals("አንድ", b1.amharicNumberWord)
+        val b4 = com.example.sound.AmharicCaller.getCallout(4)
+        assertEquals("ቢ አራት! (B-4)", b4.amharicDisplayText)
 
-        val n42 = com.example.sound.AmharicCaller.getCallout(42)
-        assertEquals("ኤን", n42.amharicLetter)
-        assertEquals("አርባ ሁለት", n42.amharicNumberWord)
+        val i22 = com.example.sound.AmharicCaller.getCallout(22)
+        assertEquals("አይ ሃያ ሁለት! (I-22)", i22.amharicDisplayText)
+
+        val n35 = com.example.sound.AmharicCaller.getCallout(35)
+        assertEquals("ኤን ሰላሳ አምስት! (N-35)", n35.amharicDisplayText)
+
+        val g50 = com.example.sound.AmharicCaller.getCallout(50)
+        assertEquals("ጂ ሃምሳ! (G-50)", g50.amharicDisplayText)
 
         val o75 = com.example.sound.AmharicCaller.getCallout(75)
-        assertEquals("ኦ", o75.amharicLetter)
-        assertEquals("ሰባ አምስት", o75.amharicNumberWord)
+        assertEquals("ኦ ሰባ አምስት! (O-75)", o75.amharicDisplayText)
+
+        assertEquals(
+            "ጨዋታው ተጀምሯል! መልካም ዕድል!",
+            com.example.sound.CallerEvent.GAME_START.amharicPhrase
+        )
+        assertEquals(
+            "ቢንጎ! እንኳን ደስ አለዎት፣ አሸናፊ አግኝተናል!",
+            com.example.sound.CallerEvent.BINGO_WIN.amharicPhrase
+        )
+        assertTrue(
+            com.example.sound.AmharicCaller.buildExpressiveSpokenPhrase(4, 2).contains("ቀጣዩ ቁጥር")
+        )
+        assertTrue(
+            com.example.sound.AmharicCaller.buildExpressiveSpokenPhrase(35, 12).contains("ቢንጎ ተቃርቧል")
+        )
+    }
+
+    @Test
+    fun testAmharicAtomicVocabularyCoversAll75Balls() {
+        val allVocab = com.example.sound.AmharicCaller.getAllAtomicVocabulary()
+        assertEquals(22, allVocab.size)
+        val validKeys = allVocab.map { it.first }.toSet()
+
+        for (ball in 1..75) {
+            val parts = com.example.sound.AmharicCaller.getAtomicComponentsForBall(ball)
+            assertTrue("Missing atomic parts for $ball", parts.size in 2..3)
+            assertTrue("First atom must be letter for $ball", parts.first().first.startsWith("atom_letter_"))
+            for ((key, phrase) in parts) {
+                assertTrue("Unknown atomic key $key for ball $ball", validKeys.contains(key))
+                assertTrue("Blank Amharic phrase for $key", phrase.isNotBlank())
+            }
+        }
+    }
+
+    @Test
+    fun testAmharicPcmTrimAndStitch() {
+        // At 24kHz: 12,000 samples (500ms) silence + 4,000 samples (167ms) signal + 12,000 samples (500ms) silence
+        val totalSamples = 28_000
+        val clip1 = ByteArray(totalSamples * 2)
+        for (i in 12_000 until 16_000) {
+            clip1[i * 2] = 0x10
+            clip1[i * 2 + 1] = 0x20
+        }
+        val stitched = com.example.sound.AmharicCaller.stitchPcmClips(listOf(clip1, clip1), sampleRate = 24_000, gapMs = 20)
+        assertTrue("Stitched PCM should be non-empty and even-aligned", stitched.isNotEmpty() && stitched.size % 2 == 0)
+        assertTrue("Trimmed stitched clip should be smaller than un-trimmed concatenation", stitched.size < clip1.size * 2)
+    }
+
+    @Test
+    fun testAmharicFadeEnvelopeSmoothsBoundaryClicks() {
+        // Constant loud amplitude signal that would otherwise click at start/end boundaries
+        val sampleCount = 2400 // 100ms at 24kHz
+        val raw = ByteArray(sampleCount * 2)
+        for (i in 0 until sampleCount) {
+            val sample = 12_000
+            raw[i * 2] = (sample and 0xFF).toByte()
+            raw[i * 2 + 1] = ((sample shr 8) and 0xFF).toByte()
+        }
+        val faded = com.example.sound.AmharicCaller.applyFadeEnvelope16BitMono(raw, sampleRate = 24_000)
+        assertEquals(raw.size, faded.size)
+
+        val firstSample = ((faded[1].toInt() shl 8) or (faded[0].toInt() and 0xFF))
+        val lastSample = ((faded[faded.size - 1].toInt() shl 8) or (faded[faded.size - 2].toInt() and 0xFF))
+        val midIdx = (sampleCount / 2) * 2
+        val midSample = ((faded[midIdx + 1].toInt() shl 8) or (faded[midIdx].toInt() and 0xFF))
+
+        assertEquals("First sample should ramp smoothly from zero", 0, firstSample)
+        assertEquals("Last sample should ramp smoothly to zero", 0, lastSample)
+        assertEquals("Middle sample should retain full speech amplitude", 12_000, midSample)
     }
 }
