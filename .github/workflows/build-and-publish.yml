@@ -44,11 +44,26 @@ jobs:
           java-version: '21'
           cache: 'gradle'
 
-      - name: Restore Debug Keystore
+      - name: Restore or Generate Debug Keystore
         run: |
-          if [ ! -f debug.keystore ] && [ -f debug.keystore.base64 ]; then
-            base64 -d debug.keystore.base64 > debug.keystore
-            echo "Restored debug.keystore from debug.keystore.base64"
+          if [ ! -s debug.keystore ] && [ -s debug.keystore.base64 ]; then
+            tr -d '[:space:]' < debug.keystore.base64 | base64 -d > debug.keystore || rm -f debug.keystore
+            echo "Decoded debug.keystore from debug.keystore.base64"
+          fi
+          if [ ! -s debug.keystore ] || ! keytool -list -keystore debug.keystore -storepass android -alias androiddebugkey >/dev/null 2>&1; then
+            rm -f debug.keystore
+            keytool -genkeypair -noprompt \
+              -keystore debug.keystore \
+              -storepass android \
+              -alias androiddebugkey \
+              -keypass android \
+              -keyalg RSA \
+              -keysize 2048 \
+              -validity 10000 \
+              -dname "CN=Android Debug,O=Android,C=US"
+            echo "Generated fallback debug.keystore via keytool"
+          else
+            echo "Verified valid debug.keystore"
           fi
 
       - name: Restore Google Services Config (if secret provided)
@@ -66,10 +81,10 @@ jobs:
         run: chmod +x gradlew
 
       - name: Run Unit & Robolectric Tests
-        run: ./gradlew testDebugUnitTest --tests "com.example.ExampleUnitTest" --tests "com.example.ExampleRobolectricTest" --continue
+        run: ./gradlew testDebugUnitTest --tests "com.example.ExampleUnitTest" --tests "com.example.ExampleRobolectricTest" --continue --no-configuration-cache --console=plain -Dorg.gradle.jvmargs="-Xmx3g -Dfile.encoding=UTF-8"
 
       - name: Build Debug APK
-        run: ./gradlew assembleDebug --stacktrace
+        run: ./gradlew assembleDebug --stacktrace --no-configuration-cache --console=plain -Dorg.gradle.jvmargs="-Xmx3g -Dfile.encoding=UTF-8"
 
       - name: Verify APK Generated
         run: |
