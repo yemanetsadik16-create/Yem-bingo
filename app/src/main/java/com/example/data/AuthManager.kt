@@ -8,6 +8,9 @@ import androidx.credentials.CredentialManager
 import androidx.credentials.CustomCredential
 import androidx.credentials.GetCredentialRequest
 import androidx.credentials.exceptions.GetCredentialCancellationException
+import androidx.credentials.exceptions.GetCredentialUnsupportedException
+import androidx.credentials.exceptions.NoCredentialException
+import com.example.R
 import com.google.android.libraries.identity.googleid.GetGoogleIdOption
 import com.google.android.libraries.identity.googleid.GetSignInWithGoogleOption
 import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential
@@ -31,6 +34,14 @@ object AuthManager {
             FirebaseApp.getApps(context.applicationContext).isNotEmpty()
         } catch (e: Exception) {
             Log.w(TAG, "FirebaseApp check failed: ${e.message}")
+            false
+        }
+    }
+
+    fun hasCurrentUser(context: Context): Boolean {
+        return try {
+            isFirebaseInitialized(context) && Firebase.auth.currentUser != null
+        } catch (e: Exception) {
             false
         }
     }
@@ -59,10 +70,9 @@ object AuthManager {
         }
 
         val clientId = try {
-            @Suppress("DiscouragedApi")
-            val resId = context.resources.getIdentifier("default_web_client_id", "string", context.packageName)
-            if (resId != 0) context.getString(resId) else throw IllegalStateException("default_web_client_id not found")
+            context.getString(R.string.default_web_client_id)
         } catch (e: Exception) {
+            Log.w(TAG, "default_web_client_id missing for auto sign-in: ${e.message}")
             onUnauthenticated()
             return
         }
@@ -104,22 +114,20 @@ object AuthManager {
         onAuthCancelled: () -> Unit = {}
     ) {
         if (!isFirebaseInitialized(context)) {
-            onAuthError("Google Sign-In is not configured in this build. Use Phone & PIN login or add google-services.json.")
+            onAuthError("Google Sign-In requires Firebase configuration (google-services.json).")
             return
         }
 
         val clientId = try {
-            @Suppress("DiscouragedApi")
-            val resId = context.resources.getIdentifier("default_web_client_id", "string", context.packageName)
-            if (resId != 0) context.getString(resId) else throw IllegalStateException("default_web_client_id not found")
+            context.getString(R.string.default_web_client_id)
         } catch (e: Exception) {
-            onAuthError("Google Sign-In configuration missing: google-services.json is required")
+            onAuthError("Google Sign-In configuration missing: default_web_client_id not found.")
             return
         }
 
         val activity = context as? Activity
         if (activity == null) {
-            onAuthError("Context is not an Activity")
+            onAuthError("Unable to open Google Sign-In dialog from this context.")
             return
         }
 
@@ -131,22 +139,80 @@ object AuthManager {
         scope.launch {
             try {
                 val result = credentialManager.getCredential(activity, request)
-                val credential = result.credential
-                if (credential is CustomCredential && credential.type == TYPE_GOOGLE_ID_TOKEN_CREDENTIAL) {
-                    val googleIdToken = GoogleIdTokenCredential.createFrom(credential.data).idToken
-                    val authCredential = GoogleAuthProvider.getCredential(googleIdToken, null)
-                    Firebase.auth.signInWithCredential(authCredential).await()
-                    onAuthSuccess()
-                } else {
-                    onAuthError("Unexpected credential type received")
-                }
+                completeFirebaseSignIn(result.credential, onAuthSuccess, onAuthError)
             } catch (e: GetCredentialCancellationException) {
                 Log.w(TAG, "Google Sign-In flow cancelled or dismissed: ${e.message}", e)
                 onAuthCancelled()
+            } catch (e: NoCredentialException) {
+                Log.w(TAG, "GetSignInWithGoogleOption returned NoCredentialException; trying Google account picker", e)
+                tryFallbackGoogleIdSignIn(
+                    activity = activity,
+                    credentialManager = credentialManager,
+                    clientId = clientId,
+                    onAuthSuccess = onAuthSuccess,
+                    onAuthError = onAuthError,
+                    onAuthCancelled = onAuthCancelled
+                )
+            } catch (e: GetCredentialUnsupportedException) {
+                Log.w(TAG, "Credential Manager SignInWithGoogle unsupported; trying GoogleIdOption", e)
+                tryFallbackGoogleIdSignIn(
+                    activity = activity,
+                    credentialManager = credentialManager,
+                    clientId = clientId,
+                    onAuthSuccess = onAuthSuccess,
+                    onAuthError = onAuthError,
+                    onAuthCancelled = onAuthCancelled
+                )
             } catch (e: Exception) {
                 Log.e(TAG, "Google Sign-In failed", e)
-                onAuthError(e.localizedMessage ?: "Google Sign-In failed")
+                onAuthError(e.localizedMessage ?: "Google Sign-In failed. Please try again.")
             }
+        }
+    }
+
+    private suspend fun tryFallbackGoogleIdSignIn(
+        activity: Activity,
+        credentialManager: CredentialManager,
+        clientId: String,
+        onAuthSuccess: () -> Unit,
+        onAuthError: (String) -> Unit,
+        onAuthCancelled: () -> Unit
+    ) {
+        val googleIdOption = GetGoogleIdOption.Builder()
+            .setFilterByAuthorizedAccounts(false)
+            .setServerClientId(clientId)
+            .setAutoSelectEnabled(false)
+            .build()
+        val fallbackRequest = GetCredentialRequest.Builder()
+            .addCredentialOption(googleIdOption)
+            .build()
+        try {
+            val result = credentialManager.getCredential(activity, fallbackRequest)
+            completeFirebaseSignIn(result.credential, onAuthSuccess, onAuthError)
+        } catch (e: GetCredentialCancellationException) {
+            Log.w(TAG, "Fallback Google Sign-In cancelled or dismissed: ${e.message}", e)
+            onAuthCancelled()
+        } catch (e: NoCredentialException) {
+            Log.w(TAG, "No Google account available on device", e)
+            onAuthError("No Google account found on this device. Add a Google account in device Settings > Accounts and tap Continue with Google again.")
+        } catch (e: Exception) {
+            Log.e(TAG, "Fallback Google Sign-In failed", e)
+            onAuthError(e.localizedMessage ?: "Google Sign-In unavailable on this device. Ensure Google Play Services is active and a Google account is signed in.")
+        }
+    }
+
+    private suspend fun completeFirebaseSignIn(
+        credential: androidx.credentials.Credential,
+        onAuthSuccess: () -> Unit,
+        onAuthError: (String) -> Unit
+    ) {
+        if (credential is CustomCredential && credential.type == TYPE_GOOGLE_ID_TOKEN_CREDENTIAL) {
+            val googleIdToken = GoogleIdTokenCredential.createFrom(credential.data).idToken
+            val authCredential = GoogleAuthProvider.getCredential(googleIdToken, null)
+            Firebase.auth.signInWithCredential(authCredential).await()
+            onAuthSuccess()
+        } else {
+            onAuthError("Unexpected credential type received.")
         }
     }
 

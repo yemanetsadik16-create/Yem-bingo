@@ -15,6 +15,9 @@ data class FirestoreUserProfile(
     val gamesPlayed: Long = 0L,
     val gamesWon: Long = 0L,
     val totalEarningsEtb: Long = 0L,
+    val pinHash: String? = null,
+    val promoCode: String? = null,
+    val welcomeBonusClaimed: Boolean = false,
     @ServerTimestamp val createdAt: Timestamp? = null,
     @ServerTimestamp val updatedAt: Timestamp? = null
 )
@@ -34,6 +37,7 @@ data class FirestoreTransaction(
 @IgnoreExtraProperties
 data class FirestoreRoomPlayer(
     val userId: String = "",
+    val deviceId: String? = null,
     val name: String = "",
     val ticketNumber: Long = 77L,
     @ServerTimestamp val joinedAt: Timestamp? = null
@@ -49,6 +53,7 @@ data class FirestoreGameRoom(
     val totalPoolEtb: Long = 600L,
     val currentPlayers: Long = 0L,
     val countdownSeconds: Long = 180L,
+    @ServerTimestamp val countdownStartedAt: Timestamp? = null,
     val status: String = "COUNTDOWN",
     val calledNumbers: List<Long> = emptyList(),
     val latestBall: Long = 0L,

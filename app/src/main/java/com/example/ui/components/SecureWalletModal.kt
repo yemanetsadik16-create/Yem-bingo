@@ -4,9 +4,6 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.widget.Toast
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -17,6 +14,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -27,12 +25,13 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.AccountBalance
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
-import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.PhoneAndroid
+import androidx.compose.material.icons.filled.ReceiptLong
 import androidx.compose.material.icons.filled.Security
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -44,7 +43,6 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -57,30 +55,26 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.example.model.PaymentMethod
-import com.example.ui.theme.BgCard
 import com.example.ui.theme.BgCardElevated
 import com.example.ui.theme.BgDark
 import com.example.ui.theme.BgSurface
 import com.example.ui.theme.BorderColor
-import com.example.ui.theme.CbeBirrGold
 import com.example.ui.theme.CbeBirrMaroon
 import com.example.ui.theme.CbeBirrOrange
-import com.example.ui.theme.GoldDark
 import com.example.ui.theme.GoldLight
 import com.example.ui.theme.GoldPrimary
-import com.example.ui.theme.MintDark
 import com.example.ui.theme.MintLight
 import com.example.ui.theme.MintPrimary
 import com.example.ui.theme.OrangeDynamic
+import com.example.ui.theme.OutfitFontFamily
+import com.example.ui.theme.PlusJakartaFontFamily
 import com.example.ui.theme.TelebirrBlue
 import com.example.ui.theme.TelebirrDarkBlue
 import com.example.ui.theme.TextPrimary
@@ -93,9 +87,12 @@ import java.util.Date
 import java.util.Locale
 import kotlin.random.Random
 
+const val DEPOSIT_ACCOUNT_HOLDER = "Yemane"
+const val DEPOSIT_ACCOUNT_NUMBER = "0939383425"
+
 enum class WalletStep {
     INPUT,
-    MOCK_GATEWAY,
+    TRANSFER_CONFIRM,
     PROCESSING,
     RECEIPT
 }
@@ -104,6 +101,7 @@ enum class WalletStep {
 fun SecureWalletModal(
     initialIsDeposit: Boolean,
     currentBalanceEtb: Int,
+    defaultPhone: String = "",
     onDismiss: () -> Unit,
     onConfirm: (amount: Int, method: PaymentMethod, phoneNumber: String) -> Unit
 ) {
@@ -114,14 +112,25 @@ fun SecureWalletModal(
     var currentStep by remember { mutableStateOf(WalletStep.INPUT) }
     var selectedMethod by remember { mutableStateOf(PaymentMethod.TELEBIRR) }
     var amountInput by remember { mutableStateOf(if (initialIsDeposit) "100" else "50") }
-    var phoneInput by remember { mutableStateOf("0912345678") }
+    var phoneInput by remember(defaultPhone) {
+        mutableStateOf(if (defaultPhone.any { it.isDigit() }) defaultPhone else "")
+    }
+    var transferRefInput by remember { mutableStateOf("") }
 
-    // Mock Gateway State
-    var telebirrPin by remember { mutableStateOf("") }
-    var cbeOtp by remember { mutableStateOf("") }
     var generatedReference by remember { mutableStateOf("") }
     var transactionTimestamp by remember { mutableStateOf("") }
     var errorMessage by remember { mutableStateOf<String?>(null) }
+
+    val copyDepositNumber: () -> Unit = {
+        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+        val clip = ClipData.newPlainText("Deposit Account Number", DEPOSIT_ACCOUNT_NUMBER)
+        clipboard.setPrimaryClip(clip)
+        Toast.makeText(
+            context,
+            "Copied $DEPOSIT_ACCOUNT_HOLDER ($DEPOSIT_ACCOUNT_NUMBER)",
+            Toast.LENGTH_SHORT
+        ).show()
+    }
 
     Dialog(
         onDismissRequest = {
@@ -167,13 +176,15 @@ fun SecureWalletModal(
                         Spacer(modifier = Modifier.width(8.dp))
                         Column {
                             Text(
-                                text = "Yem Secure Ethiopian Wallet",
+                                text = "Yem Ethiopian Wallet",
+                                fontFamily = OutfitFontFamily,
                                 color = GoldPrimary,
-                                fontSize = 15.sp,
+                                fontSize = 16.sp,
                                 fontWeight = FontWeight.Black
                             )
                             Text(
-                                text = "🔒 256-Bit SSL Encrypted • Telebirr & CBE",
+                                text = "Telebirr & CBE Birr • Instant Balance",
+                                fontFamily = PlusJakartaFontFamily,
                                 color = MintLight,
                                 fontSize = 10.sp,
                                 fontWeight = FontWeight.Bold
@@ -207,6 +218,7 @@ fun SecureWalletModal(
                             Box(
                                 modifier = Modifier
                                     .weight(1f)
+                                    .heightIn(min = 48.dp)
                                     .clip(RoundedCornerShape(10.dp))
                                     .background(if (isDeposit) OrangeDynamic else Color.Transparent)
                                     .clickable {
@@ -217,7 +229,8 @@ fun SecureWalletModal(
                                 contentAlignment = Alignment.Center
                             ) {
                                 Text(
-                                    text = "↓ Deposit Funds",
+                                    text = "Deposit Funds",
+                                    fontFamily = OutfitFontFamily,
                                     color = if (isDeposit) Color.White else TextSecondary,
                                     fontWeight = FontWeight.Black,
                                     fontSize = 12.sp
@@ -227,6 +240,7 @@ fun SecureWalletModal(
                             Box(
                                 modifier = Modifier
                                     .weight(1f)
+                                    .heightIn(min = 48.dp)
                                     .clip(RoundedCornerShape(10.dp))
                                     .background(if (!isDeposit) MintPrimary else Color.Transparent)
                                     .clickable {
@@ -237,7 +251,8 @@ fun SecureWalletModal(
                                 contentAlignment = Alignment.Center
                             ) {
                                 Text(
-                                    text = "↑ Instant Cashout",
+                                    text = "Instant Cashout",
+                                    fontFamily = OutfitFontFamily,
                                     color = if (!isDeposit) BgDark else TextSecondary,
                                     fontWeight = FontWeight.Black,
                                     fontSize = 12.sp
@@ -260,11 +275,13 @@ fun SecureWalletModal(
                         ) {
                             Text(
                                 text = "Available Balance:",
+                                fontFamily = PlusJakartaFontFamily,
                                 color = TextSecondary,
                                 fontSize = 11.sp
                             )
                             Text(
                                 text = "$currentBalanceEtb ETB",
+                                fontFamily = OutfitFontFamily,
                                 color = GoldLight,
                                 fontWeight = FontWeight.Black,
                                 fontSize = 15.sp
@@ -276,6 +293,7 @@ fun SecureWalletModal(
                         // Gateway Selection Section
                         Text(
                             text = "SELECT PAYMENT GATEWAY",
+                            fontFamily = PlusJakartaFontFamily,
                             color = TextSecondary,
                             fontSize = 11.sp,
                             fontWeight = FontWeight.Bold,
@@ -288,10 +306,9 @@ fun SecureWalletModal(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.spacedBy(10.dp)
                         ) {
-                            // Telebirr Card
                             GatewaySelectionCard(
                                 title = "Telebirr",
-                                subtitle = "USSD (*127#) & SuperApp",
+                                subtitle = if (isDeposit) "To: $DEPOSIT_ACCOUNT_HOLDER ($DEPOSIT_ACCOUNT_NUMBER)" else "USSD (*127#) & SuperApp",
                                 badgeText = "0% FEE • INSTANT",
                                 isSelected = selectedMethod == PaymentMethod.TELEBIRR,
                                 brandColor = TelebirrBlue,
@@ -300,10 +317,9 @@ fun SecureWalletModal(
                                 modifier = Modifier.weight(1f)
                             )
 
-                            // CBE Birr Card
                             GatewaySelectionCard(
                                 title = "CBE Birr",
-                                subtitle = "Commercial Bank of Ethiopia",
+                                subtitle = if (isDeposit) "To: $DEPOSIT_ACCOUNT_HOLDER ($DEPOSIT_ACCOUNT_NUMBER)" else "Commercial Bank of Ethiopia",
                                 badgeText = if (isDeposit) "0% FEE • INSTANT" else "1% FEE CASHOUT",
                                 isSelected = selectedMethod == PaymentMethod.CBE_BIRR,
                                 brandColor = CbeBirrOrange,
@@ -313,11 +329,112 @@ fun SecureWalletModal(
                             )
                         }
 
+                        // Recipient Deposit Account Card (Always visible in Deposit mode for both Telebirr & CBE Birr)
+                        if (isDeposit) {
+                            Spacer(modifier = Modifier.height(12.dp))
+                            val accentColor = if (selectedMethod == PaymentMethod.TELEBIRR) TelebirrBlue else CbeBirrOrange
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .background(BgDark)
+                                    .border(1.5.dp, accentColor, RoundedCornerShape(12.dp))
+                                    .padding(12.dp)
+                                    .testTag("deposit_recipient_card")
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.AccountBalance,
+                                        contentDescription = "Deposit Account",
+                                        tint = accentColor,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text(
+                                        text = "DEPOSIT TO (${selectedMethod.displayName.uppercase()})",
+                                        fontFamily = OutfitFontFamily,
+                                        color = accentColor,
+                                        fontWeight = FontWeight.Black,
+                                        fontSize = 11.sp,
+                                        letterSpacing = 0.4.sp
+                                    )
+                                }
+
+                                Spacer(modifier = Modifier.height(8.dp))
+
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column {
+                                        Text(
+                                            text = "Account Holder",
+                                            fontFamily = PlusJakartaFontFamily,
+                                            color = TextSecondary,
+                                            fontSize = 10.sp
+                                        )
+                                        Text(
+                                            text = DEPOSIT_ACCOUNT_HOLDER,
+                                            fontFamily = OutfitFontFamily,
+                                            color = GoldLight,
+                                            fontWeight = FontWeight.Black,
+                                            fontSize = 16.sp,
+                                            modifier = Modifier.testTag("deposit_account_holder")
+                                        )
+                                        Spacer(modifier = Modifier.height(4.dp))
+                                        Text(
+                                            text = "${selectedMethod.displayName} Account Number",
+                                            fontFamily = PlusJakartaFontFamily,
+                                            color = TextSecondary,
+                                            fontSize = 10.sp
+                                        )
+                                        Text(
+                                            text = DEPOSIT_ACCOUNT_NUMBER,
+                                            fontFamily = OutfitFontFamily,
+                                            color = MintLight,
+                                            fontWeight = FontWeight.Black,
+                                            fontSize = 17.sp,
+                                            letterSpacing = 0.8.sp,
+                                            modifier = Modifier.testTag("deposit_account_number")
+                                        )
+                                    }
+
+                                    OutlinedButton(
+                                        onClick = copyDepositNumber,
+                                        modifier = Modifier
+                                            .heightIn(min = 48.dp)
+                                            .testTag("copy_deposit_account_button"),
+                                        shape = RoundedCornerShape(10.dp),
+                                        border = androidx.compose.foundation.BorderStroke(1.dp, accentColor),
+                                        colors = ButtonDefaults.outlinedButtonColors(contentColor = accentColor)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.ContentCopy,
+                                            contentDescription = "Copy Account Number",
+                                            modifier = Modifier.size(15.dp)
+                                        )
+                                        Spacer(modifier = Modifier.width(6.dp))
+                                        Text(
+                                            text = "Copy",
+                                            fontFamily = OutfitFontFamily,
+                                            fontWeight = FontWeight.Bold,
+                                            fontSize = 12.sp
+                                        )
+                                    }
+                                }
+                            }
+                        }
+
                         Spacer(modifier = Modifier.height(14.dp))
 
                         // Quick Amount Chips
                         Text(
                             text = if (isDeposit) "QUICK DEPOSIT AMOUNTS" else "QUICK CASHOUT AMOUNTS",
+                            fontFamily = PlusJakartaFontFamily,
                             color = TextSecondary,
                             fontSize = 11.sp,
                             fontWeight = FontWeight.Bold,
@@ -403,7 +520,7 @@ fun SecureWalletModal(
 
                         Spacer(modifier = Modifier.height(10.dp))
 
-                        // Account Phone Field
+                        // Player's Account Phone Field
                         OutlinedTextField(
                             value = phoneInput,
                             onValueChange = {
@@ -412,11 +529,20 @@ fun SecureWalletModal(
                             },
                             label = {
                                 Text(
-                                    if (selectedMethod == PaymentMethod.TELEBIRR)
-                                        "Telebirr Mobile Number (+251)"
-                                    else
-                                        "CBE Birr Account / Phone (+251)"
+                                    when {
+                                        isDeposit && selectedMethod == PaymentMethod.TELEBIRR ->
+                                            "Your Telebirr Sender Number (+251 / 09...)"
+                                        isDeposit ->
+                                            "Your CBE Birr Sender Number (+251 / 09...)"
+                                        selectedMethod == PaymentMethod.TELEBIRR ->
+                                            "Your Telebirr Cashout Number (+251 / 09...)"
+                                        else ->
+                                            "Your CBE Birr Cashout Account (+251 / 09...)"
+                                    }
                                 )
+                            },
+                            placeholder = {
+                                Text("e.g., 09... or +251 9...", color = TextTertiary, fontSize = 12.sp)
                             },
                             leadingIcon = {
                                 Icon(
@@ -457,6 +583,15 @@ fun SecureWalletModal(
                                 .border(1.dp, BorderColor, RoundedCornerShape(10.dp))
                                 .padding(10.dp)
                         ) {
+                            if (isDeposit) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    Text("Deposit Recipient:", color = TextSecondary, fontSize = 11.sp)
+                                    Text("$DEPOSIT_ACCOUNT_HOLDER ($DEPOSIT_ACCOUNT_NUMBER)", color = MintLight, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                }
+                            }
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
                                 horizontalArrangement = Arrangement.SpaceBetween
@@ -515,19 +650,18 @@ fun SecureWalletModal(
                                     errorMessage = "Insufficient balance! Your available balance is $currentBalanceEtb ETB"
                                     return@Button
                                 }
-                                if (phoneInput.trim().length < 9) {
-                                    errorMessage = "Please enter a valid 9 or 10-digit Ethiopian mobile number"
+                                if (phoneInput.filter { it.isDigit() }.length < 9) {
+                                    errorMessage = "Please enter your valid 9 or 10-digit Ethiopian mobile number"
                                     return@Button
                                 }
 
-                                // Proceed to Mock Gateway Step
-                                telebirrPin = ""
-                                cbeOtp = ""
-                                currentStep = WalletStep.MOCK_GATEWAY
+                                transferRefInput = ""
+                                errorMessage = null
+                                currentStep = WalletStep.TRANSFER_CONFIRM
                             },
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .height(46.dp)
+                                .heightIn(min = 50.dp)
                                 .testTag("wallet_proceed_button"),
                             shape = RoundedCornerShape(10.dp),
                             colors = ButtonDefaults.buttonColors(
@@ -536,9 +670,10 @@ fun SecureWalletModal(
                         ) {
                             Text(
                                 text = if (isDeposit)
-                                    "PROCEED VIA ${selectedMethod.displayName.uppercase()}"
+                                    "CONTINUE ${selectedMethod.displayName.uppercase()} DEPOSIT"
                                 else
                                     "CONFIRM CASHOUT VIA ${selectedMethod.displayName.uppercase()}",
+                                fontFamily = OutfitFontFamily,
                                 fontWeight = FontWeight.ExtraBold,
                                 fontSize = 13.sp,
                                 color = Color.White
@@ -546,9 +681,9 @@ fun SecureWalletModal(
                         }
                     }
 
-                    WalletStep.MOCK_GATEWAY -> {
-                        // Interactive Mock Gateway Authorization Screen
+                    WalletStep.TRANSFER_CONFIRM -> {
                         val amount = amountInput.toIntOrNull() ?: 0
+                        val accentColor = if (selectedMethod == PaymentMethod.TELEBIRR) TelebirrBlue else CbeBirrOrange
 
                         Row(
                             modifier = Modifier.fillMaxWidth(),
@@ -562,7 +697,11 @@ fun SecureWalletModal(
                                 )
                             }
                             Text(
-                                text = "${selectedMethod.displayName} Security Verification",
+                                text = if (isDeposit)
+                                    "${selectedMethod.displayName} Deposit Confirmation"
+                                else
+                                    "${selectedMethod.displayName} Cashout Confirmation",
+                                fontFamily = OutfitFontFamily,
                                 color = TextPrimary,
                                 fontSize = 14.sp,
                                 fontWeight = FontWeight.Black
@@ -571,147 +710,87 @@ fun SecureWalletModal(
 
                         Spacer(modifier = Modifier.height(8.dp))
 
-                        if (selectedMethod == PaymentMethod.TELEBIRR) {
-                            // Telebirr USSD / App Push Simulation
-                            Column(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clip(RoundedCornerShape(14.dp))
-                                    .background(Color(0xFF072B3A))
-                                    .border(1.5.dp, TelebirrBlue, RoundedCornerShape(14.dp))
-                                    .padding(14.dp)
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(14.dp))
+                                .background(
+                                    if (selectedMethod == PaymentMethod.TELEBIRR) Color(0xFF072B3A) else Color(0xFF2A0F1A)
+                                )
+                                .border(1.5.dp, accentColor, RoundedCornerShape(14.dp))
+                                .padding(14.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                    verticalAlignment = Alignment.CenterVertically
+                                Text(
+                                    text = if (selectedMethod == PaymentMethod.TELEBIRR)
+                                        "ethio telecom telebirr"
+                                    else
+                                        "Commercial Bank of Ethiopia",
+                                    color = accentColor,
+                                    fontWeight = FontWeight.Black,
+                                    fontSize = 14.sp
+                                )
+                                Box(
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(4.dp))
+                                        .background(accentColor.copy(alpha = 0.2f))
+                                        .padding(horizontal = 6.dp, vertical = 2.dp)
                                 ) {
                                     Text(
-                                        text = "ethio telecom telebirr",
-                                        color = TelebirrBlue,
-                                        fontWeight = FontWeight.Black,
-                                        fontSize = 14.sp
+                                        text = selectedMethod.displayName.uppercase(),
+                                        color = GoldLight,
+                                        fontSize = 9.sp,
+                                        fontWeight = FontWeight.Black
                                     )
-                                    Box(
-                                        modifier = Modifier
-                                            .clip(RoundedCornerShape(4.dp))
-                                            .background(Color(0x330091DA))
-                                            .padding(horizontal = 6.dp, vertical = 2.dp)
-                                    ) {
-                                        Text(
-                                            text = "USSD PUSH ACTIVE",
-                                            color = MintLight,
-                                            fontSize = 9.sp,
-                                            fontWeight = FontWeight.Black
-                                        )
-                                    }
                                 }
+                            }
 
-                                Spacer(modifier = Modifier.height(10.dp))
+                            Spacer(modifier = Modifier.height(10.dp))
 
+                            if (isDeposit) {
                                 Text(
-                                    text = if (isDeposit)
-                                        "Payment Request from: YEM BINGO ETHIOPIA\nMerchant ID: YEM-ET-9941\nAmount: $amount ETB\nAccount: $phoneInput"
-                                    else
-                                        "Cashout Transfer to: $phoneInput\nOrigin: YEM BINGO WALLET\nAmount: $amount ETB",
-                                    color = TextPrimary,
-                                    fontSize = 11.sp,
-                                    lineHeight = 16.sp
+                                    text = "Send $amount ETB via ${selectedMethod.displayName} to:",
+                                    color = TextSecondary,
+                                    fontSize = 11.sp
                                 )
-
-                                Spacer(modifier = Modifier.height(12.dp))
-
-                                Text(
-                                    text = "Enter 4-Digit Telebirr PIN to Authorize:",
-                                    color = GoldLight,
-                                    fontSize = 11.sp,
-                                    fontWeight = FontWeight.Bold
-                                )
-
                                 Spacer(modifier = Modifier.height(6.dp))
-
-                                OutlinedTextField(
-                                    value = telebirrPin,
-                                    onValueChange = { if (it.length <= 4) telebirrPin = it.filter { c -> c.isDigit() } },
-                                    placeholder = { Text("••••") },
-                                    visualTransformation = PasswordVisualTransformation(),
-                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
-                                    modifier = Modifier.fillMaxWidth(),
-                                    colors = OutlinedTextFieldDefaults.colors(
-                                        focusedBorderColor = TelebirrBlue,
-                                        unfocusedBorderColor = BorderColor,
-                                        focusedTextColor = Color.White,
-                                        unfocusedTextColor = Color.White,
-                                        focusedContainerColor = BgDark,
-                                        unfocusedContainerColor = BgDark
-                                    ),
-                                    singleLine = true
-                                )
+                                ReceiptRow("Account Holder:", DEPOSIT_ACCOUNT_HOLDER, highlightColor = GoldLight)
+                                ReceiptRow("Account Number:", DEPOSIT_ACCOUNT_NUMBER, highlightColor = MintLight)
+                                ReceiptRow("Deposit Amount:", "$amount ETB", highlightColor = Color.White)
+                                ReceiptRow("Your Sender Phone:", phoneInput)
 
                                 Spacer(modifier = Modifier.height(10.dp))
 
                                 OutlinedButton(
-                                    onClick = { telebirrPin = "7788" },
-                                    modifier = Modifier.fillMaxWidth(),
+                                    onClick = copyDepositNumber,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .heightIn(min = 44.dp),
                                     shape = RoundedCornerShape(8.dp),
                                     colors = ButtonDefaults.outlinedButtonColors(contentColor = MintLight),
                                     border = androidx.compose.foundation.BorderStroke(1.dp, MintLight)
                                 ) {
-                                    Text("⚡ Auto-Fill Mock PIN (7788)", fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                                }
-                            }
-                        } else {
-                            // CBE Birr SMS OTP Simulation
-                            Column(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clip(RoundedCornerShape(14.dp))
-                                    .background(Color(0xFF2A0F1A))
-                                    .border(1.5.dp, CbeBirrOrange, RoundedCornerShape(14.dp))
-                                    .padding(14.dp)
-                            ) {
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Text(
-                                        text = "Commercial Bank of Ethiopia",
-                                        color = CbeBirrOrange,
-                                        fontWeight = FontWeight.Black,
-                                        fontSize = 13.sp
+                                    Icon(
+                                        imageVector = Icons.Default.ContentCopy,
+                                        contentDescription = "Copy Account",
+                                        modifier = Modifier.size(15.dp)
                                     )
-                                    Box(
-                                        modifier = Modifier
-                                            .clip(RoundedCornerShape(4.dp))
-                                            .background(Color(0x33FF6D00))
-                                            .padding(horizontal = 6.dp, vertical = 2.dp)
-                                    ) {
-                                        Text(
-                                            text = "CBE BIRR",
-                                            color = GoldLight,
-                                            fontSize = 9.sp,
-                                            fontWeight = FontWeight.Black
-                                        )
-                                    }
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text(
+                                        text = "Copy $DEPOSIT_ACCOUNT_NUMBER ($DEPOSIT_ACCOUNT_HOLDER)",
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
                                 }
-
-                                Spacer(modifier = Modifier.height(10.dp))
-
-                                Text(
-                                    text = if (isDeposit)
-                                        "CBE Core Banking Verification\nBeneficiary: Yem Bingo Ethiopian Entertainment\nAmount: $amount ETB\nTarget Account: $phoneInput"
-                                    else
-                                        "CBE Cashout Verification\nBeneficiary Account: $phoneInput\nAmount: $amount ETB",
-                                    color = TextPrimary,
-                                    fontSize = 11.sp,
-                                    lineHeight = 16.sp
-                                )
 
                                 Spacer(modifier = Modifier.height(12.dp))
 
                                 Text(
-                                    text = "Enter 6-Digit SMS OTP Code:",
+                                    text = "${selectedMethod.displayName} Transaction Reference (Optional):",
                                     color = GoldLight,
                                     fontSize = 11.sp,
                                     fontWeight = FontWeight.Bold
@@ -720,13 +799,19 @@ fun SecureWalletModal(
                                 Spacer(modifier = Modifier.height(6.dp))
 
                                 OutlinedTextField(
-                                    value = cbeOtp,
-                                    onValueChange = { if (it.length <= 6) cbeOtp = it.filter { c -> c.isDigit() } },
-                                    placeholder = { Text("6-Digit Code") },
-                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                    value = transferRefInput,
+                                    onValueChange = { transferRefInput = it },
+                                    placeholder = { Text("Paste SMS Ref / FT Number", color = TextTertiary, fontSize = 12.sp) },
+                                    leadingIcon = {
+                                        Icon(
+                                            imageVector = Icons.Default.ReceiptLong,
+                                            contentDescription = "Transaction Reference",
+                                            tint = accentColor
+                                        )
+                                    },
                                     modifier = Modifier.fillMaxWidth(),
                                     colors = OutlinedTextFieldDefaults.colors(
-                                        focusedBorderColor = CbeBirrOrange,
+                                        focusedBorderColor = accentColor,
                                         unfocusedBorderColor = BorderColor,
                                         focusedTextColor = Color.White,
                                         unfocusedTextColor = Color.White,
@@ -735,18 +820,10 @@ fun SecureWalletModal(
                                     ),
                                     singleLine = true
                                 )
-
-                                Spacer(modifier = Modifier.height(10.dp))
-
-                                OutlinedButton(
-                                    onClick = { cbeOtp = "849201" },
-                                    modifier = Modifier.fillMaxWidth(),
-                                    shape = RoundedCornerShape(8.dp),
-                                    colors = ButtonDefaults.outlinedButtonColors(contentColor = CbeBirrGold),
-                                    border = androidx.compose.foundation.BorderStroke(1.dp, CbeBirrGold)
-                                ) {
-                                    Text("🔑 Auto-Fill Demo OTP (849201)", fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                                }
+                            } else {
+                                ReceiptRow("Gateway:", selectedMethod.displayName, highlightColor = accentColor)
+                                ReceiptRow("Destination Phone:", phoneInput, highlightColor = MintLight)
+                                ReceiptRow("Cashout Amount:", "$amount ETB", highlightColor = GoldLight)
                             }
                         }
 
@@ -756,20 +833,23 @@ fun SecureWalletModal(
                             onClick = {
                                 currentStep = WalletStep.PROCESSING
                                 scope.launch {
-                                    delay(1600) // Realistic network handshake delay
+                                    delay(900)
                                     val prefix = if (selectedMethod == PaymentMethod.TELEBIRR) "TLB" else "CBE"
-                                    generatedReference = "$prefix-ET-2026-${Random.nextInt(100000, 999999)}"
+                                    val manualRef = transferRefInput.trim()
+                                    generatedReference = if (manualRef.isNotBlank()) {
+                                        manualRef
+                                    } else {
+                                        "$prefix-ET-${Random.nextInt(100000, 999999)}"
+                                    }
                                     transactionTimestamp = SimpleDateFormat("dd MMM yyyy, HH:mm", Locale.getDefault()).format(Date())
 
-                                    // Trigger real deposit/withdraw in ViewModel & Firestore
-                                    onConfirm(amount, selectedMethod, phoneInput)
-
+                                    onConfirm(amount, selectedMethod, phoneInput.trim())
                                     currentStep = WalletStep.RECEIPT
                                 }
                             },
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .height(46.dp)
+                                .heightIn(min = 50.dp)
                                 .testTag("authorize_payment_button"),
                             shape = RoundedCornerShape(10.dp),
                             colors = ButtonDefaults.buttonColors(
@@ -777,10 +857,11 @@ fun SecureWalletModal(
                             )
                         ) {
                             Text(
-                                text = if (selectedMethod == PaymentMethod.TELEBIRR)
-                                    "AUTHORIZE TELEBIRR USSD PAYMENT"
+                                text = if (isDeposit)
+                                    "CONFIRM ${selectedMethod.displayName.uppercase()} DEPOSIT"
                                 else
-                                    "AUTHORIZE CBE BIRR TRANSFER",
+                                    "CONFIRM ${selectedMethod.displayName.uppercase()} CASHOUT",
+                                fontFamily = OutfitFontFamily,
                                 fontWeight = FontWeight.ExtraBold,
                                 fontSize = 12.sp,
                                 color = Color.White
@@ -789,7 +870,6 @@ fun SecureWalletModal(
                     }
 
                     WalletStep.PROCESSING -> {
-                        // Simulated Bank / Gateway Processing
                         Column(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -806,9 +886,10 @@ fun SecureWalletModal(
 
                             Text(
                                 text = if (selectedMethod == PaymentMethod.TELEBIRR)
-                                    "Contacting Telebirr Mobile Money..."
+                                    "Recording Telebirr Transaction..."
                                 else
-                                    "Connecting to CBE Core Banking...",
+                                    "Recording CBE Birr Transaction...",
+                                fontFamily = OutfitFontFamily,
                                 color = GoldPrimary,
                                 fontWeight = FontWeight.Black,
                                 fontSize = 14.sp
@@ -817,7 +898,10 @@ fun SecureWalletModal(
                             Spacer(modifier = Modifier.height(6.dp))
 
                             Text(
-                                text = "Encrypting transaction credentials with 256-Bit SSL...",
+                                text = if (isDeposit)
+                                    "Recipient: $DEPOSIT_ACCOUNT_HOLDER ($DEPOSIT_ACCOUNT_NUMBER)"
+                                else
+                                    "Destination: $phoneInput",
                                 color = TextSecondary,
                                 fontSize = 11.sp
                             )
@@ -825,7 +909,6 @@ fun SecureWalletModal(
                     }
 
                     WalletStep.RECEIPT -> {
-                        // Transaction Success Receipt
                         val amount = amountInput.toIntOrNull() ?: 0
 
                         Column(
@@ -851,7 +934,8 @@ fun SecureWalletModal(
                             Spacer(modifier = Modifier.height(10.dp))
 
                             Text(
-                                text = if (isDeposit) "DEPOSIT SUCCESSFUL!" else "CASHOUT INITIATED!",
+                                text = if (isDeposit) "DEPOSIT RECORDED!" else "CASHOUT INITIATED!",
+                                fontFamily = OutfitFontFamily,
                                 color = MintLight,
                                 fontSize = 18.sp,
                                 fontWeight = FontWeight.Black
@@ -859,7 +943,7 @@ fun SecureWalletModal(
 
                             Text(
                                 text = if (isDeposit)
-                                    "Funds credited instantly to your Yem Bingo balance."
+                                    "Credited to your Yem Bingo wallet."
                                 else
                                     "Birr sent to your ${selectedMethod.displayName} mobile wallet.",
                                 color = TextSecondary,
@@ -868,7 +952,6 @@ fun SecureWalletModal(
 
                             Spacer(modifier = Modifier.height(16.dp))
 
-                            // Official Ethiopian Receipt Card
                             Column(
                                 modifier = Modifier
                                     .fillMaxWidth()
@@ -879,15 +962,19 @@ fun SecureWalletModal(
                             ) {
                                 ReceiptRow("Transaction ID:", generatedReference)
                                 ReceiptRow("Gateway:", selectedMethod.displayName)
+                                if (isDeposit) {
+                                    ReceiptRow("Deposited To:", "$DEPOSIT_ACCOUNT_HOLDER ($DEPOSIT_ACCOUNT_NUMBER)", highlightColor = GoldLight)
+                                    ReceiptRow("Sender Phone:", phoneInput)
+                                } else {
+                                    ReceiptRow("Account:", phoneInput)
+                                }
                                 ReceiptRow("Amount:", "${if (isDeposit) "+" else "-"}$amount ETB", highlightColor = if (isDeposit) MintLight else GoldPrimary)
-                                ReceiptRow("Account:", phoneInput)
-                                ReceiptRow("Status:", "COMPLETED (VERIFIED)", highlightColor = MintPrimary)
+                                ReceiptRow("Status:", "COMPLETED", highlightColor = MintPrimary)
                                 ReceiptRow("Date & Time:", transactionTimestamp)
                             }
 
                             Spacer(modifier = Modifier.height(14.dp))
 
-                            // Copy Reference Button
                             OutlinedButton(
                                 onClick = {
                                     val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
@@ -919,13 +1006,14 @@ fun SecureWalletModal(
                                 onClick = onDismiss,
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .height(44.dp)
+                                    .heightIn(min = 48.dp)
                                     .testTag("receipt_done_button"),
                                 shape = RoundedCornerShape(10.dp),
                                 colors = ButtonDefaults.buttonColors(containerColor = OrangeDynamic)
                             ) {
                                 Text(
                                     text = "DONE / BACK TO GAME",
+                                    fontFamily = OutfitFontFamily,
                                     fontWeight = FontWeight.Black,
                                     fontSize = 13.sp,
                                     color = Color.White
@@ -991,8 +1079,8 @@ private fun GatewaySelectionCard(
         Text(
             text = subtitle,
             color = TextSecondary,
-            fontSize = 9.sp,
-            lineHeight = 12.sp,
+            fontSize = 10.sp,
+            lineHeight = 13.sp,
             modifier = Modifier.padding(vertical = 4.dp)
         )
 
@@ -1021,7 +1109,7 @@ private fun QuickChip(
 ) {
     Box(
         modifier = modifier
-            .height(34.dp)
+            .height(36.dp)
             .clip(RoundedCornerShape(8.dp))
             .background(if (isSelected) GoldPrimary else BgSurface)
             .border(1.dp, if (isSelected) GoldPrimary else BorderColor, RoundedCornerShape(8.dp))

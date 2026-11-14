@@ -28,6 +28,9 @@ service cloud.firestore {
              data.name is string && data.name.size() >= 2 && data.name.size() <= 60 &&
              data.phone is string && data.phone.size() >= 9 && data.phone.size() <= 20 &&
              (!('avatarUrl' in data) || data.avatarUrl == null || (data.avatarUrl is string && data.avatarUrl.size() <= 500)) &&
+             (!('pinHash' in data) || data.pinHash == null || (data.pinHash is string && data.pinHash.size() <= 128)) &&
+             (!('promoCode' in data) || data.promoCode == null || (data.promoCode is string && data.promoCode.size() <= 40)) &&
+             (!('welcomeBonusClaimed' in data) || data.welcomeBonusClaimed is bool) &&
              data.city is string && data.city.size() <= 50 &&
              data.balanceEtb is int && data.balanceEtb >= 0 &&
              data.gamesPlayed is int && data.gamesPlayed >= 0 &&
@@ -41,7 +44,7 @@ service cloud.firestore {
              data.type is string && data.type in ['DEPOSIT', 'WITHDRAW', 'BET', 'WIN'] &&
              data.amountEtb is int && data.amountEtb >= 0 &&
              data.status is string && data.status in ['COMPLETED', 'PENDING', 'FAILED'] &&
-             data.paymentMethod is string && data.paymentMethod in ['TELEBIRR', 'CBE_BIRR', 'GAME_WIN', 'STAKE'] &&
+             data.paymentMethod is string && data.paymentMethod in ['TELEBIRR', 'CBE_BIRR', 'GAME_WIN', 'STAKE', 'WELCOME_BONUS', 'DAILY_REWARD'] &&
              data.reference is string && data.reference.size() <= 100;
     }
 
@@ -54,6 +57,7 @@ service cloud.firestore {
              data.totalPoolEtb is int && data.totalPoolEtb >= 0 &&
              data.currentPlayers is int && data.currentPlayers >= 0 &&
              data.countdownSeconds is int && data.countdownSeconds >= 0 && data.countdownSeconds <= 180 &&
+             (!('countdownStartedAt' in data) || data.countdownStartedAt == null || (data.countdownStartedAt is timestamp && data.countdownStartedAt <= request.time)) &&
              data.status is string && data.status in ['WAITING', 'COUNTDOWN', 'IN_PROGRESS', 'FINISHED'] &&
              (!('calledNumbers' in data) || (data.calledNumbers is list && data.calledNumbers.size() <= 75)) &&
              (!('latestBall' in data) || data.latestBall is int) &&
@@ -64,9 +68,16 @@ service cloud.firestore {
 
     function isValidRoomPlayer(data) {
       return data.userId is string && data.userId == request.auth.uid &&
+             (!('deviceId' in data) || data.deviceId == null || (data.deviceId is string && isValidId(data.deviceId) && data.deviceId.size() <= 64)) &&
              data.name is string && data.name.size() >= 2 && data.name.size() <= 60 &&
              data.ticketNumber is int && data.ticketNumber >= 1 && data.ticketNumber <= 999 &&
              data.joinedAt is timestamp && data.joinedAt <= request.time;
+    }
+
+    function isOwnPlayerEntryId(playerId) {
+      return playerId == request.auth.uid ||
+             (playerId.size() > request.auth.uid.size() + 1 &&
+              playerId[0:request.auth.uid.size() + 1] == request.auth.uid + '_');
     }
 
     function isValidLeaderboard(data) {
@@ -88,7 +99,7 @@ service cloud.firestore {
                        isValidId(userId) &&
                        incoming().userId == request.auth.uid &&
                        incoming().keys().hasAll(['userId', 'name', 'phone', 'city', 'balanceEtb', 'gamesPlayed', 'gamesWon', 'totalEarningsEtb', 'createdAt', 'updatedAt']) &&
-                       incoming().keys().hasOnly(['userId', 'name', 'phone', 'avatarUrl', 'city', 'balanceEtb', 'gamesPlayed', 'gamesWon', 'totalEarningsEtb', 'createdAt', 'updatedAt']) &&
+                       incoming().keys().hasOnly(['userId', 'name', 'phone', 'avatarUrl', 'city', 'balanceEtb', 'gamesPlayed', 'gamesWon', 'totalEarningsEtb', 'pinHash', 'promoCode', 'welcomeBonusClaimed', 'createdAt', 'updatedAt']) &&
                        incoming().createdAt is timestamp && incoming().createdAt <= request.time &&
                        incoming().updatedAt is timestamp && incoming().updatedAt <= request.time &&
                        isValidUserProfile(incoming());
@@ -99,7 +110,7 @@ service cloud.firestore {
                        incoming().userId == existing().userId &&
                        incoming().createdAt == existing().createdAt &&
                        isValidUserProfile(incoming()) &&
-                       incoming().diff(existing()).affectedKeys().hasOnly(['name', 'phone', 'avatarUrl', 'city', 'balanceEtb', 'gamesPlayed', 'gamesWon', 'totalEarningsEtb', 'updatedAt']) &&
+                       incoming().diff(existing()).affectedKeys().hasOnly(['name', 'phone', 'avatarUrl', 'city', 'balanceEtb', 'gamesPlayed', 'gamesWon', 'totalEarningsEtb', 'pinHash', 'promoCode', 'welcomeBonusClaimed', 'updatedAt']) &&
                        incoming().updatedAt is timestamp && incoming().updatedAt <= request.time;
 
       allow delete: if isSignedIn() && request.auth.uid == userId;
@@ -136,18 +147,22 @@ service cloud.firestore {
         allow get, list: if isSignedIn();
 
         allow create: if isSignedIn() &&
-                         request.auth.uid == playerId &&
                          isValidId(playerId) &&
+                         isOwnPlayerEntryId(playerId) &&
                          incoming().userId == request.auth.uid &&
                          isValidRoomPlayer(incoming());
 
         allow update: if isSignedIn() &&
-                         request.auth.uid == playerId &&
                          isValidId(playerId) &&
+                         isOwnPlayerEntryId(playerId) &&
+                         existing().userId == request.auth.uid &&
                          incoming().userId == request.auth.uid &&
                          isValidRoomPlayer(incoming());
 
-        allow delete: if isSignedIn() && request.auth.uid == playerId;
+        allow delete: if isSignedIn() &&
+                         isValidId(playerId) &&
+                         isOwnPlayerEntryId(playerId) &&
+                         (resource == null || existing().userId == request.auth.uid);
       }
     }
 

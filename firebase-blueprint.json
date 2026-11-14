@@ -14,6 +14,9 @@
         "gamesPlayed": { "type": "integer", "description": "Total bingo games played" },
         "gamesWon": { "type": "integer", "description": "Total bingo games won" },
         "totalEarningsEtb": { "type": "integer", "description": "Lifetime winning earnings in ETB" },
+        "pinHash": { "type": "string", "description": "Optional SHA-256 hash of user security PIN" },
+        "promoCode": { "type": "string", "description": "Optional referral or promo code" },
+        "welcomeBonusClaimed": { "type": "boolean", "description": "Whether the one-time registration welcome bonus was claimed" },
         "createdAt": { "type": "string", "format": "date-time", "description": "Server timestamp of account creation" },
         "updatedAt": { "type": "string", "format": "date-time", "description": "Server timestamp of last update" }
       },
@@ -29,7 +32,7 @@
         "type": { "type": "string", "description": "DEPOSIT, WITHDRAW, BET, or WIN", "enum": ["DEPOSIT", "WITHDRAW", "BET", "WIN"] },
         "amountEtb": { "type": "integer", "description": "Amount in Ethiopian Birr" },
         "status": { "type": "string", "description": "COMPLETED, PENDING, or FAILED", "enum": ["COMPLETED", "PENDING", "FAILED"] },
-        "paymentMethod": { "type": "string", "description": "Payment or wallet source", "enum": ["TELEBIRR", "CBE_BIRR", "GAME_WIN", "STAKE"] },
+        "paymentMethod": { "type": "string", "description": "Payment or wallet source", "enum": ["TELEBIRR", "CBE_BIRR", "GAME_WIN", "STAKE", "WELCOME_BONUS", "DAILY_REWARD"] },
         "reference": { "type": "string", "description": "Transaction reference code or receipt" },
         "createdAt": { "type": "string", "format": "date-time", "description": "Server timestamp of transaction" }
       },
@@ -37,10 +40,11 @@
     },
     "RoomPlayer": {
       "title": "RoomPlayer",
-      "description": "Live player joined into a specific bingo room",
+      "description": "Live player or device joined into a specific bingo room",
       "type": "object",
       "properties": {
         "userId": { "type": "string", "description": "Player UID" },
+        "deviceId": { "type": "string", "description": "Unique installation identifier for multi-device play" },
         "name": { "type": "string", "description": "Player display name" },
         "ticketNumber": { "type": "integer", "description": "Chosen ticket number" },
         "joinedAt": { "type": "string", "format": "date-time", "description": "Timestamp when joined" }
@@ -60,6 +64,7 @@
         "totalPoolEtb": { "type": "integer", "description": "Total pool in ETB" },
         "currentPlayers": { "type": "integer", "description": "Active players joined" },
         "countdownSeconds": { "type": "integer", "description": "Countdown timer seconds remaining (0-180)" },
+        "countdownStartedAt": { "type": "string", "format": "date-time", "description": "Server timestamp when the 3-minute countdown started" },
         "status": { "type": "string", "description": "Room game state", "enum": ["WAITING", "COUNTDOWN", "IN_PROGRESS", "FINISHED"] },
         "calledNumbers": { "type": "array", "description": "List of ball numbers called so far" },
         "latestBall": { "type": "integer", "description": "Most recently called ball number (1-75)" },
@@ -97,9 +102,9 @@
       "schema": { "$ref": "#/entities/GameRoom" },
       "description": "Shared live multiplayer bingo game rooms synchronized across all devices"
     },
-    "/rooms/{roomId}/players/{userId}": {
+    "/rooms/{roomId}/players/{playerId}": {
       "schema": { "$ref": "#/entities/RoomPlayer" },
-      "description": "Live players registered in this room"
+      "description": "Live players registered in this room (keyed by uid or uid_deviceId)"
     },
     "/leaderboard/{userId}": {
       "schema": { "$ref": "#/entities/LeaderboardItem" },

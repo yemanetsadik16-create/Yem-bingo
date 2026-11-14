@@ -75,15 +75,17 @@ fun YemBingoApp(
     val context = LocalContext.current
     val credentialManager = remember { CredentialManager.create(context) }
 
-    // Attempt Silent Auto-Sign-In on Launch
+    // Attempt Silent Auto-Sign-In on Launch only when Remember Me is enabled
     LaunchedEffect(Unit) {
-        AuthManager.attemptAutoSignIn(
-            context = context,
-            credentialManager = credentialManager,
-            onAuthSuccess = { viewModel.handleGoogleSignInSuccess() },
-            onUnauthenticated = {},
-            scope = scope
-        )
+        if (viewModel.isRememberMeDefault()) {
+            AuthManager.attemptAutoSignIn(
+                context = context,
+                credentialManager = credentialManager,
+                onAuthSuccess = { viewModel.handleGoogleSignInSuccess() },
+                onUnauthenticated = {},
+                scope = scope
+            )
+        }
     }
 
     // Show notifications from ViewModel
@@ -119,7 +121,7 @@ fun YemBingoApp(
         }
     }
 
-    // IF NOT LOGGED IN: Show Auth Section (Log In / Create Account / Google Sign-In)
+    // IF NOT LOGGED IN: Show Cloud Multiplayer Auth Screen (Google Sign-In required)
     if (!uiState.isLoggedIn) {
         Scaffold(
             modifier = Modifier.fillMaxSize(),
@@ -138,21 +140,51 @@ fun YemBingoApp(
                         .fillMaxWidth()
                         .widthIn(max = 520.dp)
                 ) {
+                    val launchGoogleSignIn = {
+                        viewModel.setSigningInState(true)
+                        AuthManager.onGoogleSignInClicked(
+                            context = context,
+                            credentialManager = credentialManager,
+                            onAuthSuccess = {
+                                viewModel.handleGoogleSignInSuccess()
+                            },
+                            onAuthError = { err ->
+                                viewModel.setAuthError(err)
+                            },
+                            onAuthCancelled = {
+                                viewModel.setAuthError("Google Sign-In was dismissed. Select a Google account to enter the live lobby.")
+                            },
+                            scope = scope
+                        )
+                    }
+                    val launchOrContinueSignIn = {
+                        if (AuthManager.hasCurrentUser(context)) {
+                            viewModel.handleGoogleSignInSuccess()
+                        } else {
+                            launchGoogleSignIn()
+                        }
+                    }
                     AuthScreen(
-                        onLogin = { phone, pin -> viewModel.login(phone, pin) },
-                        onRegister = { name, phone, city, pin, promo ->
-                            viewModel.register(name, phone, city, pin, promo)
+                        initialPhone = remember { viewModel.getRememberedPhone() },
+                        initialRememberMe = remember { viewModel.isRememberMeDefault() },
+                        isSigningIn = uiState.isSigningIn,
+                        authError = uiState.authError,
+                        onLoginSubmit = { phone, pin, rememberMe ->
+                            if (viewModel.prepareLoginWithPhonePin(phone, pin, rememberMe)) {
+                                launchOrContinueSignIn()
+                            }
+                        },
+                        onCreateAccountSubmit = { fullName, phone, city, pin, promoCode ->
+                            if (viewModel.prepareCreateAccount(fullName, phone, city, pin, promoCode)) {
+                                launchOrContinueSignIn()
+                            }
+                        },
+                        onResetPin = { phone, newPin ->
+                            viewModel.resetSecurityPin(phone, newPin)
                         },
                         onGoogleSignIn = {
-                            AuthManager.onGoogleSignInClicked(
-                                context = context,
-                                credentialManager = credentialManager,
-                                onAuthSuccess = { viewModel.handleGoogleSignInSuccess() },
-                                onAuthError = { err ->
-                                    scope.launch { snackbarHostState.showSnackbar(err) }
-                                },
-                                scope = scope
-                            )
+                            viewModel.prepareDirectGoogleSignIn()
+                            launchGoogleSignIn()
                         }
                     )
                 }
@@ -268,7 +300,11 @@ fun YemBingoApp(
                                 onPreviewVoice = { viewModel.previewAmharicVoice() },
                                 onDepositClick = { viewModel.openDepositModal() },
                                 onWithdrawClick = { viewModel.openWithdrawModal() },
-                                onLogout = { viewModel.logout() }
+                                onLogout = {
+                                    AuthManager.signOut(credentialManager, scope) {
+                                        viewModel.logout()
+                                    }
+                                }
                             )
                         }
                     }
@@ -281,6 +317,7 @@ fun YemBingoApp(
             WalletPaymentModal(
                 isDeposit = true,
                 currentBalanceEtb = uiState.userProfile.balanceEtb,
+                defaultPhone = remember { viewModel.getRememberedPhone() },
                 onDismiss = { viewModel.closeModal() },
                 onConfirm = { amount, method, phone ->
                     viewModel.confirmDeposit(amount, method, phone)
@@ -293,6 +330,7 @@ fun YemBingoApp(
             WalletPaymentModal(
                 isDeposit = false,
                 currentBalanceEtb = uiState.userProfile.balanceEtb,
+                defaultPhone = remember { viewModel.getRememberedPhone() },
                 onDismiss = { viewModel.closeModal() },
                 onConfirm = { amount, method, phone ->
                     viewModel.confirmWithdraw(amount, method, phone)

@@ -56,12 +56,14 @@ import com.example.viewmodel.WinCelebrationData
 fun WalletPaymentModal(
     isDeposit: Boolean,
     currentBalanceEtb: Int,
+    defaultPhone: String = "",
     onDismiss: () -> Unit,
     onConfirm: (amount: Int, method: PaymentMethod, phoneNumber: String) -> Unit
 ) {
     SecureWalletModal(
         initialIsDeposit = isDeposit,
         currentBalanceEtb = currentBalanceEtb,
+        defaultPhone = defaultPhone,
         onDismiss = onDismiss,
         onConfirm = onConfirm
     )

@@ -83,31 +83,128 @@ test("Authenticated user: can read their own profile", async () => {
   await assertSucceeds(aliceDb.collection("users").doc(ALICE_UID).get());
 });
 
-test("Multiplayer: Authenticated user can join room as a player", async () => {
+test("Multiplayer: Authenticated user can join room on multiple devices and count as 2 players", async () => {
+  const aliceDb = testEnv.authenticatedContext(ALICE_UID).firestore();
+  const playersRef = aliceDb.collection("rooms").doc("mini_starter").collection("players");
+  await assertSucceeds(
+    playersRef.doc(`${ALICE_UID}_phone1`).set({
+      userId: ALICE_UID,
+      deviceId: "phone1",
+      name: "Alice Phone",
+      ticketNumber: 77,
+      joinedAt: new Date(),
+    })
+  );
+  await assertSucceeds(
+    playersRef.doc(`${ALICE_UID}_tablet2`).set({
+      userId: ALICE_UID,
+      deviceId: "tablet2",
+      name: "Alice Tablet",
+      ticketNumber: 80,
+      joinedAt: new Date(),
+    })
+  );
+  const snapshot = await playersRef.get();
+  if (snapshot.size !== 2) {
+    throw new Error(`Expected 2 joined player docs, got ${snapshot.size}`);
+  }
+});
+
+test("Multiplayer: Bob cannot impersonate or delete Alice's device entry", async () => {
   const aliceDb = testEnv.authenticatedContext(ALICE_UID).firestore();
   await assertSucceeds(
-    aliceDb.collection("rooms").doc("mini_starter").collection("players").doc(ALICE_UID).set({
+    aliceDb.collection("rooms").doc("mini_starter").collection("players").doc(`${ALICE_UID}_phone1`).set({
       userId: ALICE_UID,
+      deviceId: "phone1",
       name: "Alice Player",
       ticketNumber: 77,
       joinedAt: new Date(),
     })
   );
-});
 
-test("Multiplayer: Bob cannot impersonate Alice in room players", async () => {
   const bobDb = testEnv.authenticatedContext(BOB_UID).firestore();
   await assertFails(
-    bobDb.collection("rooms").doc("mini_starter").collection("players").doc(ALICE_UID).set({
+    bobDb.collection("rooms").doc("mini_starter").collection("players").doc(`${ALICE_UID}_phone2`).set({
       userId: ALICE_UID,
+      deviceId: "phone2",
       name: "Imposter Alice",
       ticketNumber: 77,
       joinedAt: new Date(),
     })
   );
+  await assertFails(
+    bobDb.collection("rooms").doc("mini_starter").collection("players").doc(`${ALICE_UID}_phone1`).delete()
+  );
 });
 
-test("Multiplayer: Authenticated user can read rooms and synchronized caller", async () => {
+test("Multiplayer: Authenticated user can create and read room with countdownStartedAt", async () => {
   const aliceDb = testEnv.authenticatedContext(ALICE_UID).firestore();
+  await assertSucceeds(
+    aliceDb.collection("rooms").doc("mini_starter").set({
+      id: "mini_starter",
+      name: "Mini Starter",
+      stakeEtb: 10,
+      prizeEtb: 16,
+      houseCommissionEtb: 4,
+      totalPoolEtb: 20,
+      currentPlayers: 2,
+      countdownSeconds: 180,
+      countdownStartedAt: new Date(),
+      status: "COUNTDOWN",
+      calledNumbers: [],
+      latestBall: 0,
+      winnerId: "",
+      winnerName: "",
+      updatedAt: new Date(),
+    })
+  );
   await assertSucceeds(aliceDb.collection("rooms").doc("mini_starter").get());
+});
+
+test("Account creation: authenticated user can store pinHash, promoCode, welcomeBonusClaimed, and WELCOME_BONUS tx", async () => {
+  const aliceDb = testEnv.authenticatedContext(ALICE_UID).firestore();
+  await assertSucceeds(
+    aliceDb.collection("users").doc(ALICE_UID).set({
+      userId: ALICE_UID,
+      name: "Dawit Bekele",
+      phone: "+251911223344",
+      city: "Addis Ababa",
+      balanceEtb: 350,
+      gamesPlayed: 0,
+      gamesWon: 0,
+      totalEarningsEtb: 0,
+      pinHash: "a".repeat(64),
+      promoCode: "YEM100",
+      welcomeBonusClaimed: true,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    })
+  );
+  await assertSucceeds(
+    aliceDb.collection("users").doc(ALICE_UID).update({
+      pinHash: "b".repeat(64),
+      updatedAt: new Date(),
+    })
+  );
+  await assertSucceeds(
+    aliceDb.collection("users").doc(ALICE_UID).collection("transactions").doc("tx_welcome_1").set({
+      id: "tx_welcome_1",
+      userId: ALICE_UID,
+      type: "DEPOSIT",
+      amountEtb: 100,
+      status: "COMPLETED",
+      paymentMethod: "WELCOME_BONUS",
+      reference: "REGISTRATION_BONUS",
+      createdAt: new Date(),
+    })
+  );
+
+  // Bob cannot overwrite Alice's pinHash
+  const bobDb = testEnv.authenticatedContext(BOB_UID).firestore();
+  await assertFails(
+    bobDb.collection("users").doc(ALICE_UID).update({
+      pinHash: "c".repeat(64),
+      updatedAt: new Date(),
+    })
+  );
 });

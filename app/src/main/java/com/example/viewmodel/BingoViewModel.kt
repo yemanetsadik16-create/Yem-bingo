@@ -29,9 +29,11 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.catch
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.tasks.await
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -63,6 +65,8 @@ data class WinCelebrationData(
 
 data class BingoUiState(
     val isLoggedIn: Boolean = false,
+    val isSigningIn: Boolean = false,
+    val authError: String? = null,
     val selectedTab: NavTab = NavTab.PLAY,
     val playView: PlayView = PlayView.LOBBY,
     val userProfile: UserProfile = UserProfile(),
@@ -130,6 +134,221 @@ class BingoViewModel(application: Application) : AndroidViewModel(application) {
     private var profileObserveJob: Job? = null
     private var transactionsObserveJob: Job? = null
 
+    private var latestCloudRoomsById: Map<String, FirestoreGameRoom> = emptyMap()
+    private var latestCloudPlayersByRoom: Map<String, List<FirestoreRoomPlayer>> = emptyMap()
+    private var serverClockOffsetMs: Long = 0L
+    private val lastCountdownRestartMsByRoom = mutableMapOf<String, Long>()
+
+    private enum class PendingAuthMode {
+        NONE,
+        LOGIN,
+        CREATE_ACCOUNT
+    }
+
+    private var pendingAuthMode: PendingAuthMode = PendingAuthMode.NONE
+    private var pendingPreferredName: String = ""
+    private var pendingPreferredPhone: String = ""
+    private var pendingPreferredCity: String = ""
+    private var pendingPinHash: String = ""
+    private var pendingPromoCode: String = ""
+    private var pendingPinResetPhone: String = ""
+    private var pendingPinResetHash: String = ""
+
+    private var rawCloudPhone: String = "Google Verified"
+    private var cloudPinHash: String? = null
+    private var cloudPromoCode: String? = null
+    private var cloudWelcomeBonusClaimed: Boolean = false
+    private var cloudGamesWon: Long = 0L
+
+    private val authPrefs by lazy {
+        getApplication<Application>().getSharedPreferences("yem_bingo_auth_prefs", android.content.Context.MODE_PRIVATE)
+    }
+
+    private fun normalizeEthiopianPhone(raw: String): String {
+        val digits = raw.filter { it.isDigit() }
+        return when {
+            digits.startsWith("251") && digits.length >= 12 -> "+$digits"
+            digits.startsWith("0") && digits.length >= 10 -> "+251${digits.drop(1)}"
+            digits.length == 9 -> "+251$digits"
+            else -> raw.trim()
+        }
+    }
+
+    private fun hashPin(pin: String): String {
+        val bytes = java.security.MessageDigest.getInstance("SHA-256").digest(pin.toByteArray())
+        return bytes.joinToString("") { "%02x".format(it) }
+    }
+
+    private fun formatDisplayPhone(phone: String): String {
+        return when {
+            phone == "+251911000000" || phone == "Google Verified" || phone.isBlank() -> "Google Verified"
+            phone.length >= 9 && phone.any { it.isDigit() } -> {
+                val digits = phone.filter { it.isDigit() }.takeLast(9)
+                if (digits.length == 9) "+251${digits.replaceRange(4, 7, "***")}" else phone
+            }
+            else -> "Google Verified"
+        }
+    }
+
+    private fun buildCurrentFirestoreProfile(
+        userId: String,
+        balanceEtb: Long,
+        gamesPlayed: Long = _uiState.value.userProfile.gamesPlayed.toLong(),
+        gamesWon: Long = cloudGamesWon,
+        totalEarningsEtb: Long = _uiState.value.userProfile.totalWinningsEtb.toLong(),
+        name: String = _uiState.value.userProfile.name,
+        city: String = _uiState.value.userProfile.location
+    ): FirestoreUserProfile {
+        val phoneToSave = rawCloudPhone.trim().let {
+            if (it.length in 9..20) it else "Google Verified"
+        }
+        return FirestoreUserProfile(
+            userId = userId,
+            name = name,
+            phone = phoneToSave,
+            city = city,
+            balanceEtb = balanceEtb.coerceAtLeast(0L),
+            gamesPlayed = gamesPlayed.coerceAtLeast(0L),
+            gamesWon = gamesWon.coerceAtLeast(0L),
+            totalEarningsEtb = totalEarningsEtb.coerceAtLeast(0L),
+            pinHash = cloudPinHash,
+            promoCode = cloudPromoCode,
+            welcomeBonusClaimed = cloudWelcomeBonusClaimed
+        )
+    }
+
+    fun getRememberedPhone(): String {
+        return if (authPrefs.getBoolean("remember_me", true)) {
+            authPrefs.getString("remembered_phone", "") ?: ""
+        } else {
+            ""
+        }
+    }
+
+    fun isRememberMeDefault(): Boolean = authPrefs.getBoolean("remember_me", true)
+
+    fun prepareDirectGoogleSignIn() {
+        pendingAuthMode = PendingAuthMode.NONE
+        pendingPinHash = ""
+        pendingPreferredPhone = ""
+        pendingPreferredName = ""
+        pendingPreferredCity = ""
+        pendingPromoCode = ""
+        _uiState.update { it.copy(authError = null) }
+    }
+
+    fun prepareLoginWithPhonePin(phone: String, pin: String, rememberMe: Boolean): Boolean {
+        val cleanPhone = normalizeEthiopianPhone(phone)
+        val digitsCount = cleanPhone.count { it.isDigit() }
+        if (digitsCount < 9) {
+            setAuthError("Please enter a valid Ethiopian phone number (e.g., +251 9... or 09...).")
+            return false
+        }
+        if (pin.length !in 4..6 || !pin.all { it.isDigit() }) {
+            setAuthError("Please enter your 4 to 6-digit security PIN.")
+            return false
+        }
+        val enteredHash = hashPin(pin)
+        val savedPhone = authPrefs.getString("registered_phone", null)
+        val savedPinHash = authPrefs.getString("pin_hash", null)
+        if (savedPhone == cleanPhone && savedPinHash != null && savedPinHash != enteredHash) {
+            setAuthError("Incorrect security PIN for $cleanPhone. Tap Reset PIN if needed.")
+            return false
+        }
+        val editor = authPrefs.edit()
+            .putBoolean("remember_me", rememberMe)
+            .putString("remembered_phone", if (rememberMe) phone.trim() else "")
+        if (savedPhone == null || savedPhone == cleanPhone || savedPinHash == null) {
+            editor.putString("registered_phone", cleanPhone)
+                .putString("pin_hash", enteredHash)
+        }
+        editor.apply()
+        pendingAuthMode = PendingAuthMode.LOGIN
+        pendingPinHash = enteredHash
+        pendingPreferredPhone = cleanPhone
+        _uiState.update { it.copy(authError = null) }
+        return true
+    }
+
+    fun prepareCreateAccount(
+        fullName: String,
+        phone: String,
+        city: String,
+        pin: String,
+        promoCode: String
+    ): Boolean {
+        val trimmedName = fullName.trim()
+        if (trimmedName.length < 2) {
+            setAuthError("Please enter your full name (at least 2 characters).")
+            return false
+        }
+        val cleanPhone = normalizeEthiopianPhone(phone)
+        if (cleanPhone.count { it.isDigit() } < 9) {
+            setAuthError("Please enter a valid Ethiopian mobile number (+251 9... / 09...).")
+            return false
+        }
+        if (pin.length !in 4..6 || !pin.all { it.isDigit() }) {
+            setAuthError("Please set a 4 to 6-digit numeric security PIN.")
+            return false
+        }
+        val newPinHash = hashPin(pin)
+        authPrefs.edit()
+            .putBoolean("remember_me", true)
+            .putString("remembered_phone", phone.trim())
+            .putString("registered_phone", cleanPhone)
+            .putString("pin_hash", newPinHash)
+            .apply()
+        pendingAuthMode = PendingAuthMode.CREATE_ACCOUNT
+        pendingPreferredName = trimmedName
+        pendingPreferredPhone = cleanPhone
+        pendingPreferredCity = city.trim()
+        pendingPinHash = newPinHash
+        pendingPromoCode = promoCode.trim()
+        _uiState.update { it.copy(authError = null) }
+        return true
+    }
+
+    fun resetSecurityPin(phone: String, newPin: String): String? {
+        val cleanPhone = normalizeEthiopianPhone(phone)
+        if (cleanPhone.count { it.isDigit() } < 9) {
+            return "Enter a valid Ethiopian phone number (+251 9... or 09...)."
+        }
+        if (newPin.length !in 4..6 || !newPin.all { it.isDigit() }) {
+            return "New PIN must be 4 to 6 digits."
+        }
+        val newHash = hashPin(newPin)
+        authPrefs.edit()
+            .putString("registered_phone", cleanPhone)
+            .putString("remembered_phone", phone.trim())
+            .putString("pin_hash", newHash)
+            .apply()
+
+        pendingPinResetPhone = cleanPhone
+        pendingPinResetHash = newHash
+
+        val user = currentFirebaseUser()
+        val repo = repository
+        if (user != null && repo != null) {
+            cloudPinHash = newHash
+            rawCloudPhone = cleanPhone
+            viewModelScope.launch {
+                try {
+                    repo.updateUserPinHash(user.uid, newHash, cleanPhone)
+                } catch (e: Exception) {
+                    Log.w("BingoViewModel", "Cloud PIN reset sync deferred: ${e.message}")
+                }
+            }
+        }
+
+        _uiState.update {
+            it.copy(
+                authError = null,
+                notificationMessage = "Security PIN updated for $cleanPhone. Enter your new PIN to log in."
+            )
+        }
+        return null
+    }
+
     private fun currentFirebaseUser(): FirebaseUser? {
         return try {
             if (AuthManager.isFirebaseInitialized(getApplication())) {
@@ -156,8 +375,32 @@ class BingoViewModel(application: Application) : AndroidViewModel(application) {
         selectTicket(77)
         startTimers()
 
-        if (currentFirebaseUser() != null) {
+        if (currentFirebaseUser() != null && isRememberMeDefault()) {
             handleGoogleSignInSuccess()
+        }
+    }
+
+    fun setPendingOnboardingPreferences(name: String, phone: String, city: String) {
+        pendingPreferredName = name.trim()
+        pendingPreferredPhone = phone.trim()
+        pendingPreferredCity = city.trim()
+    }
+
+    fun setSigningInState(signingIn: Boolean) {
+        _uiState.update {
+            it.copy(
+                isSigningIn = signingIn,
+                authError = if (signingIn) null else it.authError
+            )
+        }
+    }
+
+    fun setAuthError(message: String?) {
+        _uiState.update {
+            it.copy(
+                isSigningIn = false,
+                authError = message
+            )
         }
     }
 
@@ -177,93 +420,23 @@ class BingoViewModel(application: Application) : AndroidViewModel(application) {
 
         roomsObserveJob?.cancel()
         roomsObserveJob = viewModelScope.launch {
-            repo.observeRooms()
+            combine(
+                repo.observeRooms(),
+                repo.observeAllRoomPlayers(FirestoreRepository.DEFAULT_ROOM_IDS)
+            ) { firestoreRooms, playersByRoom ->
+                firestoreRooms to playersByRoom
+            }
                 .catch { error ->
                     if (error is CancellationException) throw error
                     Log.w("BingoViewModel", "observeRooms error: ${error.message}")
                 }
-                .collect { firestoreRooms ->
-                    if (firestoreRooms.isNotEmpty()) {
-                        val orderedIds = listOf("mini_starter", "standard", "high_roller", "mega_addis", "habesha_vip")
-                        var remoteAutoStartRoom: Room? = null
-                        _uiState.update { st ->
-                            val existingById = st.rooms.associateBy { it.id }
-                            val mappedRooms = firestoreRooms.map { fr ->
-                                val existing = existingById[fr.id]
-                                val badgeColor = when (fr.id) {
-                                    "mini_starter" -> 0xFF20C997
-                                    "standard" -> 0xFFFFC107
-                                    "high_roller" -> 0xFFFF5722
-                                    "mega_addis" -> 0xFFFFC107
-                                    "habesha_vip" -> 0xFFFF5722
-                                    else -> 0xFF20C997
-                                }
-                                val isJoinedLocally = fr.id in st.joinedRoomIds
-                                val playerCount = if (isJoinedLocally && fr.currentPlayers == 0L) {
-                                    maxOf(1, existing?.currentPlayers ?: 1)
-                                } else {
-                                    fr.currentPlayers.toInt()
-                                }
-                                val liveCountdown = if (
-                                    fr.status != "IN_PROGRESS" &&
-                                    existing != null &&
-                                    existing.countdownSeconds in 1..179
-                                ) {
-                                    existing.countdownSeconds
-                                } else {
-                                    fr.countdownSeconds.toInt().coerceIn(0, 180)
-                                }
-                                val mins = liveCountdown / 60
-                                val secs = liveCountdown % 60
-                                val timeStr = String.format("%02d:%02d", mins, secs)
-                                val statusText = when {
-                                    fr.status == "IN_PROGRESS" -> "Game Live 🔴"
-                                    playerCount >= 2 -> "$timeStr • 2+ Ready"
-                                    else -> "$timeStr (Need 2+)"
-                                }
-                                val pool = if (isJoinedLocally && fr.totalPoolEtb == 0L) {
-                                    maxOf(fr.stakeEtb.toInt(), existing?.totalPoolEtb ?: fr.stakeEtb.toInt())
-                                } else {
-                                    fr.totalPoolEtb.toInt()
-                                }
-                                val room = Room(
-                                    id = fr.id,
-                                    name = fr.name,
-                                    stakeEtb = fr.stakeEtb.toInt(),
-                                    totalPoolEtb = pool,
-                                    prizeEtb = (pool * 80) / 100, // 80% to winner
-                                    houseCommissionEtb = (pool * 20) / 100, // 20% house commission
-                                    currentPlayers = playerCount,
-                                    maxPlayers = existing?.maxPlayers ?: 100,
-                                    countdownSeconds = liveCountdown,
-                                    statusText = statusText,
-                                    badgeColorHex = badgeColor
-                                )
-                                if (
-                                    remoteAutoStartRoom == null &&
-                                    isJoinedLocally &&
-                                    fr.status == "IN_PROGRESS" &&
-                                    playerCount >= 2 &&
-                                    st.playView != PlayView.GAMEPLAY
-                                ) {
-                                    remoteAutoStartRoom = room
-                                }
-                                room
-                            }.sortedBy { r ->
-                                val idx = orderedIds.indexOf(r.id)
-                                if (idx >= 0) idx else 99
-                            }
-
-                            val updatedSel = st.selectedRoom?.let { sel ->
-                                mappedRooms.find { it.id == sel.id } ?: sel
-                            }
-                            st.copy(rooms = mappedRooms, selectedRoom = updatedSel)
-                        }
-
-                        remoteAutoStartRoom?.let { roomToStart ->
-                            launchJoinedGame(roomToStart)
-                        }
-                    }
+                .collect { (firestoreRooms, playersByRoom) ->
+                    applyCloudLobbySnapshot(
+                        firestoreRooms = firestoreRooms,
+                        playersByRoom = playersByRoom,
+                        currentUserId = currentFirebaseUser()?.uid,
+                        currentDeviceId = repo.deviceId
+                    )
                 }
         }
 
@@ -382,9 +555,157 @@ class BingoViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    internal fun processCountdownTick() {
+    internal fun applyCloudLobbySnapshot(
+        firestoreRooms: List<FirestoreGameRoom>,
+        playersByRoom: Map<String, List<FirestoreRoomPlayer>>,
+        currentUserId: String?,
+        currentDeviceId: String?,
+        nowEpochMs: Long = System.currentTimeMillis()
+    ) {
+        val roomsById = firestoreRooms.associateBy { it.id }
+        latestCloudRoomsById = roomsById
+        latestCloudPlayersByRoom = playersByRoom
+
+        val orderedIds = FirestoreRepository.DEFAULT_ROOM_IDS
+        val approxServerNowMs = nowEpochMs + serverClockOffsetMs
+        var remoteAutoStartRoom: Room? = null
+
+        _uiState.update { st ->
+            val existingById = st.rooms.associateBy { it.id }
+            val recoveredJoinedIds = st.joinedRoomIds.toMutableSet()
+
+            val allRoomIds = (orderedIds + roomsById.keys).distinct()
+            val mappedRooms = allRoomIds.mapNotNull { roomId ->
+                val existing = existingById[roomId]
+                val fr = roomsById[roomId]
+                if (existing == null && fr == null) return@mapNotNull null
+
+                val meta = FirestoreRepository.DEFAULT_ROOMS_META.find { it.id == roomId }
+                val roomName = fr?.name ?: existing?.name ?: meta?.name ?: roomId
+                val stakeEtb = (fr?.stakeEtb ?: existing?.stakeEtb?.toLong() ?: meta?.stakeEtb ?: 10L).toInt()
+                val roomStatus = fr?.status ?: "COUNTDOWN"
+
+                val rawPlayers = playersByRoom[roomId]
+                val activePlayers = rawPlayers?.filter { player ->
+                    val joinedMs = player.joinedAt?.toDate()?.time
+                    when {
+                        roomStatus == "FINISHED" -> false
+                        joinedMs == null -> true
+                        (approxServerNowMs - joinedMs) > 25 * 60 * 1000L -> false
+                        else -> true
+                    }
+                }
+
+                // Recover active join status if this device's player doc is already present in Firestore
+                if (
+                    currentUserId != null &&
+                    activePlayers != null &&
+                    roomStatus != "IN_PROGRESS" &&
+                    roomStatus != "FINISHED" &&
+                    activePlayers.any { p ->
+                        p.userId == currentUserId &&
+                            (currentDeviceId == null || p.deviceId == null || p.deviceId == currentDeviceId)
+                    }
+                ) {
+                    recoveredJoinedIds.add(roomId)
+                }
+
+                val isJoinedLocally = roomId in recoveredJoinedIds
+                val playerCount = when {
+                    activePlayers != null -> {
+                        if (isJoinedLocally && activePlayers.isEmpty()) 1 else activePlayers.size
+                    }
+                    fr != null -> {
+                        if (isJoinedLocally && fr.currentPlayers == 0L) {
+                            maxOf(1, existing?.currentPlayers ?: 1)
+                        } else {
+                            fr.currentPlayers.toInt()
+                        }
+                    }
+                    else -> existing?.currentPlayers ?: 0
+                }
+
+                val liveCountdown = when {
+                    roomStatus == "IN_PROGRESS" -> 0
+                    fr?.countdownStartedAt != null -> {
+                        val startedMs = fr.countdownStartedAt.toDate().time
+                        val elapsedSec = ((approxServerNowMs - startedMs) / 1000L).coerceAtLeast(0L)
+                        (180 - elapsedSec.toInt()).coerceIn(0, 180)
+                    }
+                    fr != null -> fr.countdownSeconds.toInt().coerceIn(0, 180)
+                    else -> existing?.countdownSeconds ?: 180
+                }
+
+                val mins = liveCountdown / 60
+                val secs = liveCountdown % 60
+                val timeStr = String.format("%02d:%02d", mins, secs)
+                val statusText = when {
+                    roomStatus == "IN_PROGRESS" -> "Game Live 🔴"
+                    playerCount >= 2 -> "$timeStr • 2+ Ready"
+                    else -> "$timeStr (Need 2+)"
+                }
+
+                val pool = playerCount * stakeEtb
+                val badgeColor = when (roomId) {
+                    "mini_starter" -> 0xFF20C997
+                    "standard" -> 0xFFFFC107
+                    "high_roller" -> 0xFFFF5722
+                    "mega_addis" -> 0xFFFFC107
+                    "habesha_vip" -> 0xFFFF5722
+                    else -> existing?.badgeColorHex ?: 0xFF20C997
+                }
+
+                val mapped = Room(
+                    id = roomId,
+                    name = roomName,
+                    stakeEtb = stakeEtb,
+                    totalPoolEtb = pool,
+                    prizeEtb = (pool * 80) / 100,
+                    houseCommissionEtb = (pool * 20) / 100,
+                    currentPlayers = playerCount,
+                    maxPlayers = existing?.maxPlayers ?: 100,
+                    countdownSeconds = liveCountdown,
+                    statusText = statusText,
+                    badgeColorHex = badgeColor
+                )
+
+                if (
+                    remoteAutoStartRoom == null &&
+                    isJoinedLocally &&
+                    playerCount >= 2 &&
+                    (roomStatus == "IN_PROGRESS" || liveCountdown <= 0) &&
+                    st.playView != PlayView.GAMEPLAY
+                ) {
+                    remoteAutoStartRoom = mapped
+                }
+                mapped
+            }
+
+            val updatedSel = st.selectedRoom?.let { sel ->
+                mappedRooms.find { it.id == sel.id } ?: sel
+            }
+            val activeSelectedPlayers = updatedSel?.let { sel ->
+                playersByRoom[sel.id]
+            } ?: st.activeRoomPlayers
+
+            st.copy(
+                rooms = mappedRooms,
+                selectedRoom = updatedSel,
+                joinedRoomIds = recoveredJoinedIds,
+                activeRoomPlayers = activeSelectedPlayers
+            )
+        }
+
+        remoteAutoStartRoom?.let { roomToStart ->
+            launchJoinedGame(roomToStart)
+        }
+    }
+
+    internal fun processCountdownTick(nowEpochMs: Long = System.currentTimeMillis()) {
         var autoStartRoom: Room? = null
         var waitingNotification: String? = null
+        val roomsNeedingCloudRestart = mutableListOf<String>()
+        val approxServerNowMs = nowEpochMs + serverClockOffsetMs
 
         _uiState.update { state ->
             val nextJackpot = if (state.jackpotSecondsLeft <= 0) 300 else state.jackpotSecondsLeft - 1
@@ -392,7 +713,14 @@ class BingoViewModel(application: Application) : AndroidViewModel(application) {
 
             // Countdown 3 minutes (180 seconds) for each room
             val updatedRooms = state.rooms.map { room ->
-                val nextSec = room.countdownSeconds - 1
+                val cloudStartedMs = latestCloudRoomsById[room.id]?.countdownStartedAt?.toDate()?.time
+                val nextSec = if (cloudStartedMs != null) {
+                    val elapsedSec = ((approxServerNowMs - cloudStartedMs) / 1000L).coerceAtLeast(0L)
+                    (180 - elapsedSec.toInt()).coerceAtLeast(0)
+                } else {
+                    room.countdownSeconds - 1
+                }
+
                 if (nextSec <= 0) {
                     // 3-minute timer finished
                     if (room.currentPlayers >= 2) {
@@ -414,6 +742,7 @@ class BingoViewModel(application: Application) : AndroidViewModel(application) {
                             waitingNotification =
                                 "⏳ ${room.name}: ${room.currentPlayers}/2 players joined. Need 2+ players to start — timer reset to 03:00."
                         }
+                        roomsNeedingCloudRestart.add(room.id)
                         room.copy(
                             countdownSeconds = 180,
                             statusText = "03:00 (Need 2+)"
@@ -442,6 +771,26 @@ class BingoViewModel(application: Application) : AndroidViewModel(application) {
                 tournamentSecondsLeft = nextTournamentSec,
                 notificationMessage = waitingNotification ?: state.notificationMessage
             )
+        }
+
+        val repo = repository
+        val user = currentFirebaseUser()
+        if (repo != null && user != null && roomsNeedingCloudRestart.isNotEmpty()) {
+            val nowElapsed = android.os.SystemClock.elapsedRealtime()
+            roomsNeedingCloudRestart.forEach { roomId ->
+                val players = latestCloudPlayersByRoom[roomId].orEmpty()
+                val isFirstOrOnlyPlayer = players.isEmpty() ||
+                    players.minByOrNull { "${it.userId}_${it.deviceId ?: ""}" }?.userId == user.uid
+                val lastRestart = lastCountdownRestartMsByRoom[roomId] ?: 0L
+                if (isFirstOrOnlyPlayer && (nowElapsed - lastRestart) > 8_000L) {
+                    lastCountdownRestartMsByRoom[roomId] = nowElapsed
+                    viewModelScope.launch {
+                        try {
+                            repo.restartRoomCountdown(roomId)
+                        } catch (_: Exception) {}
+                    }
+                }
+            }
         }
 
         autoStartRoom?.let { roomToStart ->
@@ -624,6 +973,20 @@ class BingoViewModel(application: Application) : AndroidViewModel(application) {
     fun joinRoomGame() {
         val state = _uiState.value
         val room = state.selectedRoom ?: return
+        val repo = repository
+        val user = currentFirebaseUser()
+
+        // Require live Firebase Auth whenever Firebase is configured on device
+        if (repo != null && user == null) {
+            _uiState.update {
+                it.copy(
+                    isLoggedIn = false,
+                    authError = "Please sign in with Google to join live multiplayer rooms.",
+                    notificationMessage = "Please sign in with Google to join live multiplayer rooms."
+                )
+            }
+            return
+        }
 
         if (room.id in state.joinedRoomIds) {
             soundManager.playButtonTap()
@@ -649,7 +1012,8 @@ class BingoViewModel(application: Application) : AndroidViewModel(application) {
         soundManager.playButtonTap()
         soundManager.warmAmharicVocabulary()
 
-        val newBalance = state.userProfile.balanceEtb - room.stakeEtb
+        val previousBalance = state.userProfile.balanceEtb
+        val newBalance = previousBalance - room.stakeEtb
         val joinedCard = state.currentCard ?: generateCardForTicket(state.selectedTicketNumber)
         val newTx = TransactionItem(
             id = "tx_bet_${System.currentTimeMillis()}",
@@ -666,7 +1030,7 @@ class BingoViewModel(application: Application) : AndroidViewModel(application) {
                 if (r.id == room.id) {
                     val count = r.currentPlayers + 1
                     newJoinedCount = count
-                    val pool = r.totalPoolEtb + r.stakeEtb
+                    val pool = count * r.stakeEtb
                     val mins = r.countdownSeconds / 60
                     val secs = r.countdownSeconds % 60
                     val timeStr = String.format("%02d:%02d", mins, secs)
@@ -693,12 +1057,10 @@ class BingoViewModel(application: Application) : AndroidViewModel(application) {
             )
         }
 
-        val user = currentFirebaseUser()
-        val repo = repository
         if (user != null && repo != null) {
             viewModelScope.launch {
                 try {
-                    repo.joinRoom(
+                    val actualCount = repo.joinRoom(
                         roomId = room.id,
                         userId = user.uid,
                         name = state.userProfile.name,
@@ -718,17 +1080,63 @@ class BingoViewModel(application: Application) : AndroidViewModel(application) {
                         )
                     )
                     repo.updateUserProfile(
-                        FirestoreUserProfile(
+                        buildCurrentFirestoreProfile(
                             userId = user.uid,
-                            name = state.userProfile.name,
-                            phone = state.userProfile.phoneMasked,
-                            city = state.userProfile.location,
-                            balanceEtb = newBalance.toLong(),
-                            gamesPlayed = state.userProfile.gamesPlayed.toLong(),
-                            totalEarningsEtb = state.userProfile.totalWinningsEtb.toLong()
+                            balanceEtb = newBalance.toLong()
                         )
                     )
-                } catch (_: Exception) {}
+                    _uiState.update { st ->
+                        val syncedRooms = st.rooms.map { r ->
+                            if (r.id == room.id) {
+                                val pool = actualCount * r.stakeEtb
+                                val mins = r.countdownSeconds / 60
+                                val secs = r.countdownSeconds % 60
+                                val timeStr = String.format("%02d:%02d", mins, secs)
+                                r.copy(
+                                    currentPlayers = actualCount,
+                                    totalPoolEtb = pool,
+                                    prizeEtb = (pool * 80) / 100,
+                                    houseCommissionEtb = (pool * 20) / 100,
+                                    statusText = if (actualCount >= 2) "$timeStr • 2+ Ready" else "$timeStr (Need 2+)"
+                                )
+                            } else r
+                        }
+                        st.copy(
+                            rooms = syncedRooms,
+                            selectedRoom = st.selectedRoom?.let { sel -> syncedRooms.find { it.id == sel.id } ?: sel }
+                        )
+                    }
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    Log.e("BingoViewModel", "Failed to sync room join to Firestore", e)
+                    _uiState.update { st ->
+                        val revertedRooms = st.rooms.map { r ->
+                            if (r.id == room.id) {
+                                val count = (r.currentPlayers - 1).coerceAtLeast(0)
+                                val pool = count * r.stakeEtb
+                                val mins = r.countdownSeconds / 60
+                                val secs = r.countdownSeconds % 60
+                                val timeStr = String.format("%02d:%02d", mins, secs)
+                                r.copy(
+                                    currentPlayers = count,
+                                    totalPoolEtb = pool,
+                                    prizeEtb = (pool * 80) / 100,
+                                    houseCommissionEtb = (pool * 20) / 100,
+                                    statusText = if (count >= 2) "$timeStr • 2+ Ready" else "$timeStr (Need 2+)"
+                                )
+                            } else r
+                        }
+                        st.copy(
+                            userProfile = st.userProfile.copy(balanceEtb = previousBalance),
+                            transactions = st.transactions.filterNot { it.id == newTx.id },
+                            rooms = revertedRooms,
+                            joinedRoomIds = st.joinedRoomIds - room.id,
+                            joinedCardsByRoom = st.joinedCardsByRoom - room.id,
+                            notificationMessage = "Unable to join live room (${e.localizedMessage ?: "connection error"}). Stake not charged."
+                        )
+                    }
+                }
             }
         }
     }
@@ -744,7 +1152,7 @@ class BingoViewModel(application: Application) : AndroidViewModel(application) {
             val updatedRooms = st.rooms.map { r ->
                 if (r.id == roomId) {
                     val count = (r.currentPlayers - 1).coerceAtLeast(0)
-                    val pool = (r.totalPoolEtb - r.stakeEtb).coerceAtLeast(0)
+                    val pool = count * r.stakeEtb
                     val mins = r.countdownSeconds / 60
                     val secs = r.countdownSeconds % 60
                     val timeStr = String.format("%02d:%02d", mins, secs)
@@ -774,17 +1182,19 @@ class BingoViewModel(application: Application) : AndroidViewModel(application) {
                 try {
                     repo.leaveRoom(roomId, user.uid, room.stakeEtb)
                     repo.updateUserProfile(
-                        FirestoreUserProfile(
+                        buildCurrentFirestoreProfile(
                             userId = user.uid,
-                            name = state.userProfile.name,
-                            phone = state.userProfile.phoneMasked,
-                            city = state.userProfile.location,
-                            balanceEtb = refundedBalance.toLong(),
-                            gamesPlayed = state.userProfile.gamesPlayed.toLong(),
-                            totalEarningsEtb = state.userProfile.totalWinningsEtb.toLong()
+                            balanceEtb = refundedBalance.toLong()
                         )
                     )
-                } catch (_: Exception) {}
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    Log.w("BingoViewModel", "leaveJoinedRoom sync failed: ${e.message}")
+                    _uiState.update {
+                        it.copy(notificationMessage = "Room leave sync warning: ${e.localizedMessage ?: "Network issue"}")
+                    }
+                }
             }
         }
     }
@@ -865,14 +1275,10 @@ class BingoViewModel(application: Application) : AndroidViewModel(application) {
                         )
                     }
                     repo.updateUserProfile(
-                        FirestoreUserProfile(
+                        buildCurrentFirestoreProfile(
                             userId = user.uid,
-                            name = state.userProfile.name,
-                            phone = state.userProfile.phoneMasked,
-                            city = state.userProfile.location,
                             balanceEtb = newBalance.toLong(),
-                            gamesPlayed = (state.userProfile.gamesPlayed + 1).toLong(),
-                            totalEarningsEtb = state.userProfile.totalWinningsEtb.toLong()
+                            gamesPlayed = (state.userProfile.gamesPlayed + 1).toLong()
                         )
                     )
                 } catch (_: Exception) {}
@@ -895,7 +1301,10 @@ class BingoViewModel(application: Application) : AndroidViewModel(application) {
         if (repo != null && currentFirebaseUser() != null) {
             roomSyncJob = viewModelScope.launch {
                 val players = _uiState.value.activeRoomPlayers
-                val isHostInitially = players.isEmpty() || players.minByOrNull { it.userId }?.userId == currentUid
+                val myEntryKey = "${currentUid}_${repo.deviceId}"
+                val isHostInitially = players.isEmpty() ||
+                    players.minByOrNull { "${it.userId}_${it.deviceId ?: repo.deviceId}" }
+                        ?.let { "${it.userId}_${it.deviceId ?: repo.deviceId}" } == myEntryKey
                 if (isHostInitially) {
                     actingAsHost.set(true)
                     try {
@@ -1009,9 +1418,11 @@ class BingoViewModel(application: Application) : AndroidViewModel(application) {
 
                 if (repo != null && currentFirebaseUser() != null) {
                     val players = _uiState.value.activeRoomPlayers
+                    val myEntryKey = "${currentUid}_${repo.deviceId}"
                     val isHost = actingAsHost.get() ||
                         players.isEmpty() ||
-                        players.minByOrNull { it.userId }?.userId == currentUid
+                        players.minByOrNull { "${it.userId}_${it.deviceId ?: repo.deviceId}" }
+                            ?.let { "${it.userId}_${it.deviceId ?: repo.deviceId}" } == myEntryKey
                     val hostStalled = (android.os.SystemClock.elapsedRealtime() - lastFirestoreBallAtMs.get()) > 7_000L
 
                     if ((isHost || hostStalled) && _uiState.value.winCelebration == null) {
@@ -1215,6 +1626,7 @@ class BingoViewModel(application: Application) : AndroidViewModel(application) {
                 winRatePercent = (newWinRate * 10).toInt() / 10f
             )
 
+            cloudGamesWon += 1L
             // Claim win in Firestore so prize is credited and all devices see winner
             val repo = repository
             if (user != null && room != null && repo != null) {
@@ -1258,6 +1670,16 @@ class BingoViewModel(application: Application) : AndroidViewModel(application) {
 
     fun dismissWinModal() {
         soundManager.playButtonTap()
+        val room = _uiState.value.selectedRoom
+        val user = currentFirebaseUser()
+        val repo = repository
+        if (room != null && user != null && repo != null) {
+            viewModelScope.launch {
+                try {
+                    repo.leaveRoom(room.id, user.uid, 0)
+                } catch (_: Exception) {}
+            }
+        }
         _uiState.update {
             val roomId = it.selectedRoom?.id
             it.copy(
@@ -1289,7 +1711,7 @@ class BingoViewModel(application: Application) : AndroidViewModel(application) {
         val newBalance = _uiState.value.userProfile.balanceEtb + amount
         val newTx = TransactionItem(
             id = "tx_dep_${System.currentTimeMillis()}",
-            title = "Deposit via ${method.displayName}",
+            title = "Deposit via ${method.displayName} (To: Yemane • 0939383425)",
             amountEtb = amount,
             isCredit = true,
             timestampFormatted = SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date()),
@@ -1301,7 +1723,7 @@ class BingoViewModel(application: Application) : AndroidViewModel(application) {
                 userProfile = it.userProfile.copy(balanceEtb = newBalance),
                 transactions = listOf(newTx) + it.transactions,
                 showDepositModal = false,
-                notificationMessage = "Successfully credited +$amount ETB via ${method.displayName} ($phoneNumber)!"
+                notificationMessage = "Credited +$amount ETB via ${method.displayName} (To: Yemane • 0939383425)!"
             )
         }
         val user = currentFirebaseUser()
@@ -1318,18 +1740,13 @@ class BingoViewModel(application: Application) : AndroidViewModel(application) {
                             amountEtb = amount.toLong(),
                             status = "COMPLETED",
                             paymentMethod = method.name,
-                            reference = phoneNumber
+                            reference = "Yemane 0939383425 | From $phoneNumber".take(100)
                         )
                     )
                     repo.updateUserProfile(
-                        FirestoreUserProfile(
+                        buildCurrentFirestoreProfile(
                             userId = user.uid,
-                            name = _uiState.value.userProfile.name,
-                            phone = _uiState.value.userProfile.phoneMasked,
-                            city = _uiState.value.userProfile.location,
-                            balanceEtb = newBalance.toLong(),
-                            gamesPlayed = _uiState.value.userProfile.gamesPlayed.toLong(),
-                            totalEarningsEtb = _uiState.value.userProfile.totalWinningsEtb.toLong()
+                            balanceEtb = newBalance.toLong()
                         )
                     )
                 } catch (_: Exception) {}
@@ -1380,14 +1797,9 @@ class BingoViewModel(application: Application) : AndroidViewModel(application) {
                         )
                     )
                     repo.updateUserProfile(
-                        FirestoreUserProfile(
+                        buildCurrentFirestoreProfile(
                             userId = user.uid,
-                            name = _uiState.value.userProfile.name,
-                            phone = _uiState.value.userProfile.phoneMasked,
-                            city = _uiState.value.userProfile.location,
-                            balanceEtb = newBalance.toLong(),
-                            gamesPlayed = _uiState.value.userProfile.gamesPlayed.toLong(),
-                            totalEarningsEtb = _uiState.value.userProfile.totalWinningsEtb.toLong()
+                            balanceEtb = newBalance.toLong()
                         )
                     )
                 } catch (_: Exception) {}
@@ -1441,14 +1853,11 @@ class BingoViewModel(application: Application) : AndroidViewModel(application) {
                         )
                     )
                     repo.updateUserProfile(
-                        FirestoreUserProfile(
+                        buildCurrentFirestoreProfile(
                             userId = user.uid,
-                            name = newProfile.name,
-                            phone = newProfile.phoneMasked,
-                            city = newProfile.location,
                             balanceEtb = newProfile.balanceEtb.toLong(),
-                            gamesPlayed = newProfile.gamesPlayed.toLong(),
-                            totalEarningsEtb = newProfile.totalWinningsEtb.toLong()
+                            name = newProfile.name,
+                            city = newProfile.location
                         )
                     )
                 } catch (_: Exception) {}
@@ -1456,93 +1865,208 @@ class BingoViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun login(phoneOrUsername: String, pin: String) {
-        val cleanInput = phoneOrUsername.trim()
-        val phoneDigits = cleanInput.filter { it.isDigit() }
-        val cleanPhone = if (phoneDigits.startsWith("0")) phoneDigits else "0$phoneDigits"
-        val displaySuffix = if (cleanPhone.length >= 4) cleanPhone.takeLast(4) else "Player"
-        val profile = UserProfile(
-            name = "Player $displaySuffix",
-            phoneMasked = if (cleanPhone.length >= 9) "+251${cleanPhone.takeLast(9).replaceRange(4, 7, "****")}" else "+2519****777",
-            location = "Addis Ababa",
-            vipLevel = 1,
-            balanceEtb = 250,
-            promoCode = "YEM-PLAYER-77"
-        )
-        soundManager.playWin()
-        _uiState.update {
-            it.copy(
-                isLoggedIn = true,
-                userProfile = profile,
-                notificationMessage = "Welcome back, ${profile.name}!"
-            )
-        }
-    }
-
-    fun register(fullName: String, phone: String, city: String, pin: String, promoCode: String) {
-        val welcomeBonus = if (promoCode.isNotBlank()) 300 else 250
-        val phoneDigits = phone.filter { it.isDigit() }
-        val cleanPhone = if (phoneDigits.startsWith("0")) phoneDigits else "0$phoneDigits"
-        val profile = UserProfile(
-            name = fullName,
-            phoneMasked = if (cleanPhone.length >= 9) "+251${cleanPhone.takeLast(9).replaceRange(4, 7, "****")}" else "+2519****100",
-            location = if (city.isNotBlank()) city else "Addis Ababa",
-            vipLevel = 1,
-            balanceEtb = welcomeBonus,
-            gamesPlayed = 0,
-            totalWinningsEtb = 0,
-            winRatePercent = 0.0f,
-            dailyStreakDays = 1,
-            promoCode = "YEM-${fullName.filter { it.isLetter() }.take(4).uppercase()}-77",
-            isDailyClaimed = false
-        )
-        val bonusTx = TransactionItem(
-            id = "tx_welcome_${System.currentTimeMillis()}",
-            title = "New Player Welcome Bonus",
-            amountEtb = welcomeBonus,
-            isCredit = true,
-            timestampFormatted = SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date()),
-            method = "Welcome Reward"
-        )
-        soundManager.playWin()
-        _uiState.update {
-            it.copy(
-                isLoggedIn = true,
-                userProfile = profile,
-                transactions = listOf(bonusTx) + it.transactions,
-                notificationMessage = "Account created! Welcome bonus of +$welcomeBonus ETB credited! 🎁"
-            )
-        }
-    }
-
     fun handleGoogleSignInSuccess() {
-        val user = currentFirebaseUser() ?: return
-        val repo = repository ?: return
-        startCloudLobbySync()
+        val user = currentFirebaseUser() ?: run {
+            _uiState.update { it.copy(isSigningIn = false) }
+            return
+        }
+        val repo = repository ?: run {
+            _uiState.update { it.copy(isSigningIn = false) }
+            return
+        }
+
+        _uiState.update { it.copy(isSigningIn = true, authError = null) }
+
+        val authModeSnapshot = pendingAuthMode
+        val namePrefSnapshot = pendingPreferredName
+        val phonePrefSnapshot = pendingPreferredPhone
+        val cityPrefSnapshot = pendingPreferredCity
+        val pinHashSnapshot = pendingPinHash
+        val promoPrefSnapshot = pendingPromoCode
+        val resetPhoneSnapshot = pendingPinResetPhone
+        val resetHashSnapshot = pendingPinResetHash
 
         viewModelScope.launch {
             try {
-                val name = user.displayName?.ifBlank { null } ?: "Habesha Player"
-                val phone = user.phoneNumber?.ifBlank { null } ?: "+251911000000"
-                val profile = repo.createInitialUserProfile(
+                val chosenName = namePrefSnapshot.ifBlank {
+                    user.displayName?.ifBlank { null } ?: "Habesha Player"
+                }.take(60).let { if (it.length < 2) "Habesha Player" else it }
+                val rawPhone = phonePrefSnapshot.ifBlank {
+                    user.phoneNumber?.ifBlank { null } ?: ""
+                }.trim()
+                val chosenPhone = if (rawPhone.length in 9..20) rawPhone else "Google Verified"
+                val chosenCity = cityPrefSnapshot.ifBlank { "Addis Ababa" }.take(50)
+                val cleanPromo = promoPrefSnapshot.trim().take(40).ifBlank { null }
+
+                val isCreateAccount = (authModeSnapshot == PendingAuthMode.CREATE_ACCOUNT)
+                val promoBonusEtb = if (cleanPromo != null && cleanPromo.length >= 3) 50L else 0L
+                val welcomeBonusEtb = 100L + promoBonusEtb
+
+                val docAlreadyExisted = try {
+                    repo.db.collection("users").document(user.uid).get().await().exists()
+                } catch (_: Exception) {
+                    false
+                }
+
+                val (createdOrExisting, clockOffsetMs) = repo.createInitialUserProfile(
                     userId = user.uid,
-                    name = name,
-                    phone = phone,
-                    city = "Addis Ababa"
+                    name = chosenName,
+                    phone = chosenPhone,
+                    city = chosenCity,
+                    initialBalanceEtb = if (isCreateAccount) welcomeBonusEtb else 250L,
+                    pinHash = pinHashSnapshot.ifBlank { null },
+                    promoCode = cleanPromo,
+                    welcomeBonusClaimed = isCreateAccount
                 )
+                serverClockOffsetMs = clockOffsetMs
+
+                // 1. If user clicked LOG IN with Phone + PIN, verify against cloud PIN hash (unless just reset)
+                val resolvedPinHash = resetHashSnapshot.ifBlank { createdOrExisting.pinHash.orEmpty() }
+                if (
+                    authModeSnapshot == PendingAuthMode.LOGIN &&
+                    resolvedPinHash.isNotBlank() &&
+                    pinHashSnapshot.isNotBlank() &&
+                    resolvedPinHash != pinHashSnapshot
+                ) {
+                    pendingAuthMode = PendingAuthMode.NONE
+                    pendingPinHash = ""
+                    setAuthError("Incorrect security PIN for this account. Tap Reset PIN to set a new PIN.")
+                    return@launch
+                }
+
+                // 2. Apply pending PIN reset, Create Account bonus (one-time), or Login preferences update
+                var effectiveProfile = createdOrExisting
+                var welcomeNotification: String? = null
+
+                if (resetHashSnapshot.isNotBlank() && resetHashSnapshot != createdOrExisting.pinHash) {
+                    val resetPhoneToSave = if (resetPhoneSnapshot.length in 9..20) resetPhoneSnapshot else createdOrExisting.phone
+                    effectiveProfile = effectiveProfile.copy(
+                        pinHash = resetHashSnapshot,
+                        phone = resetPhoneToSave
+                    )
+                }
+
+                val hasCustomPrefs = namePrefSnapshot.isNotBlank() ||
+                    phonePrefSnapshot.isNotBlank() ||
+                    cityPrefSnapshot.isNotBlank() ||
+                    cleanPromo != null ||
+                    (pinHashSnapshot.isNotBlank() && createdOrExisting.pinHash.isNullOrBlank())
+
+                if (isCreateAccount && !docAlreadyExisted) {
+                    // Brand-new account registered via CREATE ACCOUNT & CLAIM 100 ETB -> record transaction
+                    val bonusRef = if (promoBonusEtb > 0L) "REG_BONUS_${cleanPromo}" else "REG_WELCOME_100"
+                    try {
+                        repo.recordTransaction(
+                            userId = user.uid,
+                            transaction = FirestoreTransaction(
+                                id = "tx_welcome_${System.currentTimeMillis()}",
+                                userId = user.uid,
+                                type = "DEPOSIT",
+                                amountEtb = welcomeBonusEtb,
+                                status = "COMPLETED",
+                                paymentMethod = "WELCOME_BONUS",
+                                reference = bonusRef.take(100)
+                            )
+                        )
+                    } catch (_: Exception) {}
+                    welcomeNotification = if (promoBonusEtb > 0L) {
+                        "🎉 Account created! +100 ETB Welcome + 50 ETB Promo Bonus credited!"
+                    } else {
+                        "🎉 Account created! +100 ETB Welcome Bonus credited to your wallet!"
+                    }
+                } else if (isCreateAccount && !createdOrExisting.welcomeBonusClaimed) {
+                    // Existing user who never claimed registration welcome bonus claims it once
+                    val newBal = effectiveProfile.balanceEtb + welcomeBonusEtb
+                    effectiveProfile = effectiveProfile.copy(
+                        name = if (namePrefSnapshot.trim().length >= 2) namePrefSnapshot.trim().take(60) else effectiveProfile.name,
+                        phone = if (phonePrefSnapshot.length in 9..20) phonePrefSnapshot else effectiveProfile.phone,
+                        city = cityPrefSnapshot.ifBlank { effectiveProfile.city }.take(50),
+                        balanceEtb = newBal,
+                        pinHash = pinHashSnapshot.ifBlank { effectiveProfile.pinHash },
+                        promoCode = cleanPromo ?: effectiveProfile.promoCode,
+                        welcomeBonusClaimed = true
+                    )
+                    try {
+                        repo.updateUserProfile(effectiveProfile)
+                        val bonusRef = if (promoBonusEtb > 0L) "REG_BONUS_${cleanPromo}" else "REG_WELCOME_100"
+                        repo.recordTransaction(
+                            userId = user.uid,
+                            transaction = FirestoreTransaction(
+                                id = "tx_welcome_${System.currentTimeMillis()}",
+                                userId = user.uid,
+                                type = "DEPOSIT",
+                                amountEtb = welcomeBonusEtb,
+                                status = "COMPLETED",
+                                paymentMethod = "WELCOME_BONUS",
+                                reference = bonusRef.take(100)
+                            )
+                        )
+                    } catch (_: Exception) {}
+                    welcomeNotification = if (promoBonusEtb > 0L) {
+                        "🎉 +100 ETB Welcome + 50 ETB Promo Bonus credited!"
+                    } else {
+                        "🎉 +100 ETB Welcome Bonus credited to your wallet!"
+                    }
+                } else if (hasCustomPrefs || effectiveProfile != createdOrExisting) {
+                    val updatedName = namePrefSnapshot.trim().take(60)
+                    effectiveProfile = effectiveProfile.copy(
+                        name = if (updatedName.length >= 2) updatedName else effectiveProfile.name,
+                        phone = if (phonePrefSnapshot.length in 9..20) phonePrefSnapshot else effectiveProfile.phone,
+                        city = cityPrefSnapshot.ifBlank { effectiveProfile.city }.take(50),
+                        pinHash = effectiveProfile.pinHash ?: pinHashSnapshot.ifBlank { null },
+                        promoCode = cleanPromo ?: effectiveProfile.promoCode
+                    )
+                    try {
+                        repo.updateUserProfile(effectiveProfile)
+                    } catch (_: Exception) {}
+                    if (isCreateAccount && createdOrExisting.welcomeBonusClaimed) {
+                        welcomeNotification = "Welcome back ${effectiveProfile.name}! (Welcome bonus already claimed)."
+                    }
+                }
+
+                // Sync verified credentials to local authPrefs
+                val finalPinHash = effectiveProfile.pinHash
+                val finalPhone = effectiveProfile.phone
+                if (!finalPinHash.isNullOrBlank() && finalPhone.length in 9..20 && finalPhone != "Google Verified") {
+                    authPrefs.edit()
+                        .putString("registered_phone", finalPhone)
+                        .putString("pin_hash", finalPinHash)
+                        .apply()
+                }
+
+                rawCloudPhone = effectiveProfile.phone
+                cloudPinHash = effectiveProfile.pinHash
+                cloudPromoCode = effectiveProfile.promoCode
+                cloudWelcomeBonusClaimed = effectiveProfile.welcomeBonusClaimed
+                cloudGamesWon = effectiveProfile.gamesWon
+
+                pendingAuthMode = PendingAuthMode.NONE
+                pendingPreferredName = ""
+                pendingPreferredPhone = ""
+                pendingPreferredCity = ""
+                pendingPinHash = ""
+                pendingPromoCode = ""
+                pendingPinResetPhone = ""
+                pendingPinResetHash = ""
+
+                startCloudLobbySync()
                 soundManager.playWin()
+                val displayPhone = formatDisplayPhone(effectiveProfile.phone)
                 _uiState.update {
                     it.copy(
                         isLoggedIn = true,
+                        isSigningIn = false,
+                        authError = null,
                         userProfile = UserProfile(
-                            name = profile.name,
-                            phoneMasked = if (profile.phone.length >= 9) "+251${profile.phone.takeLast(9).replaceRange(4, 7, "****")}" else "+2519****777",
-                            location = profile.city,
-                            balanceEtb = profile.balanceEtb.toInt(),
-                            gamesPlayed = profile.gamesPlayed.toInt(),
-                            totalWinningsEtb = profile.totalEarningsEtb.toInt()
+                            name = effectiveProfile.name,
+                            phoneMasked = displayPhone,
+                            location = effectiveProfile.city,
+                            balanceEtb = effectiveProfile.balanceEtb.toInt(),
+                            gamesPlayed = effectiveProfile.gamesPlayed.toInt(),
+                            totalWinningsEtb = effectiveProfile.totalEarningsEtb.toInt(),
+                            promoCode = effectiveProfile.promoCode?.takeIf { code -> code.isNotBlank() } ?: "YEM-PLAYER-77"
                         ),
-                        notificationMessage = "Signed in with Google! Connected to Firebase Cloud."
+                        notificationMessage = welcomeNotification ?: "Signed in! Connected to Live Multiplayer."
                     )
                 }
 
@@ -1556,13 +2080,21 @@ class BingoViewModel(application: Application) : AndroidViewModel(application) {
                         }
                         .collect { updated ->
                             if (updated != null) {
+                                rawCloudPhone = updated.phone
+                                cloudPinHash = updated.pinHash
+                                cloudPromoCode = updated.promoCode
+                                cloudWelcomeBonusClaimed = updated.welcomeBonusClaimed
+                                cloudGamesWon = updated.gamesWon
                                 _uiState.update { st ->
                                     st.copy(
                                         userProfile = st.userProfile.copy(
                                             name = updated.name,
+                                            phoneMasked = formatDisplayPhone(updated.phone),
+                                            location = updated.city,
                                             balanceEtb = updated.balanceEtb.toInt(),
                                             gamesPlayed = updated.gamesPlayed.toInt(),
-                                            totalWinningsEtb = updated.totalEarningsEtb.toInt()
+                                            totalWinningsEtb = updated.totalEarningsEtb.toInt(),
+                                            promoCode = updated.promoCode?.takeIf { code -> code.isNotBlank() } ?: st.userProfile.promoCode
                                         )
                                     )
                                 }
@@ -1585,10 +2117,12 @@ class BingoViewModel(application: Application) : AndroidViewModel(application) {
                                 val dateStr = tx.createdAt?.toDate()?.let { sdf.format(it) } ?: "Just now"
                                 TransactionItem(
                                     id = tx.id,
-                                    title = when (tx.type) {
-                                        "WIN" -> "Bingo Win (${tx.reference})"
-                                        "BET" -> "Room Stake (${tx.reference})"
-                                        "WITHDRAW" -> "Cashout (${tx.paymentMethod})"
+                                    title = when {
+                                        tx.paymentMethod == "WELCOME_BONUS" -> "Welcome Registration Bonus (${tx.reference})"
+                                        tx.paymentMethod == "DAILY_REWARD" -> "Daily Free Tier Reward (${tx.reference})"
+                                        tx.type == "WIN" -> "Bingo Win (${tx.reference})"
+                                        tx.type == "BET" -> "Room Stake (${tx.reference})"
+                                        tx.type == "WITHDRAW" -> "Cashout (${tx.paymentMethod})"
                                         else -> "Deposit via ${tx.paymentMethod}"
                                     },
                                     amountEtb = tx.amountEtb.toInt(),
@@ -1603,13 +2137,33 @@ class BingoViewModel(application: Application) : AndroidViewModel(application) {
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                _uiState.update { it.copy(notificationMessage = "Firebase sync: ${e.localizedMessage}") }
+                _uiState.update {
+                    it.copy(
+                        isSigningIn = false,
+                        authError = "Firebase sync failed: ${e.localizedMessage}",
+                        notificationMessage = "Firebase sync: ${e.localizedMessage}"
+                    )
+                }
             }
         }
     }
 
     fun logout() {
         soundManager.playButtonTap()
+        val joinedSnapshot = _uiState.value.joinedRoomIds.toList()
+        val roomsSnapshot = _uiState.value.rooms
+        val user = currentFirebaseUser()
+        val repo = repository
+        if (user != null && repo != null && joinedSnapshot.isNotEmpty()) {
+            viewModelScope.launch {
+                joinedSnapshot.forEach { roomId ->
+                    val stake = roomsSnapshot.find { it.id == roomId }?.stakeEtb ?: 0
+                    try {
+                        repo.leaveRoom(roomId, user.uid, stake)
+                    } catch (_: Exception) {}
+                }
+            }
+        }
         gameJob?.cancel()
         roomSyncJob?.cancel()
         playersJob?.cancel()
@@ -1617,6 +2171,12 @@ class BingoViewModel(application: Application) : AndroidViewModel(application) {
         leaderboardObserveJob?.cancel()
         profileObserveJob?.cancel()
         transactionsObserveJob?.cancel()
+        pendingAuthMode = PendingAuthMode.NONE
+        pendingPinHash = ""
+        pendingPreferredName = ""
+        pendingPreferredPhone = ""
+        pendingPreferredCity = ""
+        pendingPromoCode = ""
         try {
             if (AuthManager.isFirebaseInitialized(getApplication())) {
                 Firebase.auth.signOut()
@@ -1625,6 +2185,8 @@ class BingoViewModel(application: Application) : AndroidViewModel(application) {
         _uiState.update {
             it.copy(
                 isLoggedIn = false,
+                isSigningIn = false,
+                authError = null,
                 playView = PlayView.LOBBY,
                 selectedTab = NavTab.PLAY,
                 joinedRoomIds = emptySet(),

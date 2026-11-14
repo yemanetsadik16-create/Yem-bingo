@@ -142,4 +142,117 @@ class ExampleRobolectricTest {
     assertTrue(vm.uiState.value.isCalling)
     assertEquals(balanceAfterJoin, vm.uiState.value.userProfile.balanceEtb)
   }
+
+  @Test
+  fun `cloud lobby snapshot counts two real players across devices and syncs 3-minute countdown`() {
+    val app = ApplicationProvider.getApplicationContext<Application>()
+    val vm = BingoViewModel(app)
+
+    val nowMs = 1_700_000_100_000L
+    val startedAt = com.google.firebase.Timestamp(java.util.Date(nowMs - 60_000L)) // 60s elapsed -> 120s remaining
+
+    val cloudRoom = com.example.data.FirestoreGameRoom(
+      id = "mini_starter",
+      name = "Mini Starter",
+      stakeEtb = 10L,
+      currentPlayers = 2L,
+      countdownSeconds = 180L,
+      countdownStartedAt = startedAt,
+      status = "COUNTDOWN"
+    )
+    val players = listOf(
+      com.example.data.FirestoreRoomPlayer(
+        userId = "uid_player_1",
+        deviceId = "dev_phone_1",
+        name = "Player One",
+        ticketNumber = 71L,
+        joinedAt = com.google.firebase.Timestamp(java.util.Date(nowMs - 55_000L))
+      ),
+      com.example.data.FirestoreRoomPlayer(
+        userId = "uid_player_2",
+        deviceId = "dev_tablet_2",
+        name = "Player Two",
+        ticketNumber = 77L,
+        joinedAt = com.google.firebase.Timestamp(java.util.Date(nowMs - 10_000L))
+      )
+    )
+
+    vm.applyCloudLobbySnapshot(
+      firestoreRooms = listOf(cloudRoom),
+      playersByRoom = mapOf("mini_starter" to players),
+      currentUserId = "uid_player_1",
+      currentDeviceId = "dev_phone_1",
+      nowEpochMs = nowMs
+    )
+
+    val updatedMini = vm.uiState.value.rooms.first { it.id == "mini_starter" }
+    assertEquals(2, updatedMini.currentPlayers)
+    assertEquals(20, updatedMini.totalPoolEtb)
+    assertEquals(16, updatedMini.prizeEtb)
+    assertEquals(4, updatedMini.houseCommissionEtb)
+    assertEquals(120, updatedMini.countdownSeconds)
+    assertTrue(vm.uiState.value.joinedRoomIds.contains("mini_starter"))
+  }
+
+  @Test
+  fun `phone and pin login, create account, remember me, and reset pin validate properly`() {
+    val app = ApplicationProvider.getApplicationContext<Application>()
+    val vm = BingoViewModel(app)
+
+    // Invalid short phone rejected
+    assertFalse(vm.prepareLoginWithPhonePin("123", "1234", rememberMe = true))
+    assertNotNull(vm.uiState.value.authError)
+
+    // Valid account registration saves phone and PIN hash
+    assertTrue(
+      vm.prepareCreateAccount(
+        fullName = "Dawit Bekele",
+        phone = "0911223344",
+        city = "Addis Ababa",
+        pin = "4567",
+        promoCode = "YEM100"
+      )
+    )
+    assertEquals("0911223344", vm.getRememberedPhone())
+
+    // Wrong PIN rejected
+    assertFalse(vm.prepareLoginWithPhonePin("+251911223344", "9999", rememberMe = true))
+    assertTrue(vm.uiState.value.authError?.contains("Incorrect") == true)
+
+    // Matching PIN accepted with rememberMe = false clears remembered phone & flag
+    assertTrue(vm.prepareLoginWithPhonePin("+251911223344", "4567", rememberMe = false))
+    assertEquals("", vm.getRememberedPhone())
+    assertFalse(vm.isRememberMeDefault())
+
+    // Reset PIN updates stored hash
+    val resetErr = vm.resetSecurityPin("0911223344", "8899")
+    assertEquals(null, resetErr)
+    assertTrue(vm.prepareLoginWithPhonePin("+251911223344", "8899", rememberMe = true))
+    assertTrue(vm.isRememberMeDefault())
+
+    // prepareDirectGoogleSignIn clears stale authError
+    vm.setAuthError("Some error")
+    vm.prepareDirectGoogleSignIn()
+    assertEquals(null, vm.uiState.value.authError)
+  }
+
+  @Test
+  fun `deposit uses account holder Yemane and account number 0939383425 for telebirr and cbe birr`() {
+    assertEquals("Yemane", com.example.ui.components.DEPOSIT_ACCOUNT_HOLDER)
+    assertEquals("0939383425", com.example.ui.components.DEPOSIT_ACCOUNT_NUMBER)
+
+    val app = ApplicationProvider.getApplicationContext<Application>()
+    val vm = BingoViewModel(app)
+    val startBal = vm.uiState.value.userProfile.balanceEtb
+
+    vm.confirmDeposit(100, com.example.model.PaymentMethod.TELEBIRR, "0911223344")
+    assertEquals(startBal + 100, vm.uiState.value.userProfile.balanceEtb)
+    assertTrue(vm.uiState.value.transactions.first().title.contains("Yemane"))
+    assertTrue(vm.uiState.value.transactions.first().title.contains("0939383425"))
+
+    vm.confirmDeposit(200, com.example.model.PaymentMethod.CBE_BIRR, "0911223344")
+    assertEquals(startBal + 300, vm.uiState.value.userProfile.balanceEtb)
+    assertTrue(vm.uiState.value.transactions.first().title.contains("Yemane"))
+    assertTrue(vm.uiState.value.transactions.first().title.contains("0939383425"))
+  }
 }
