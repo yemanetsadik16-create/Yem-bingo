@@ -195,17 +195,23 @@ class ExampleRobolectricTest {
   }
 
   @Test
-  fun `phone and pin login, create account, remember me, and reset pin validate properly`() {
+  fun `phone and pin login, create account, remember me, and reset pin work directly without google redirect`() {
     val app = ApplicationProvider.getApplicationContext<Application>()
     val vm = BingoViewModel(app)
 
     // Invalid short phone rejected
-    assertFalse(vm.prepareLoginWithPhonePin("123", "1234", rememberMe = true))
+    assertFalse(vm.loginWithPhonePin("123", "1234", rememberMe = true))
+    assertFalse(vm.uiState.value.isLoggedIn)
     assertNotNull(vm.uiState.value.authError)
 
-    // Valid account registration saves phone and PIN hash
+    // Unregistered phone rejected cleanly
+    assertFalse(vm.loginWithPhonePin("0911998877", "1234", rememberMe = true))
+    assertFalse(vm.uiState.value.isLoggedIn)
+    assertTrue(vm.uiState.value.authError?.contains("No account found") == true)
+
+    // Valid account registration creates account, credits 100 + 50 promo ETB, and enters lobby directly
     assertTrue(
-      vm.prepareCreateAccount(
+      vm.createAccountWithPhonePin(
         fullName = "Dawit Bekele",
         phone = "0911223344",
         city = "Addis Ababa",
@@ -213,21 +219,42 @@ class ExampleRobolectricTest {
         promoCode = "YEM100"
       )
     )
+    assertTrue(vm.uiState.value.isLoggedIn)
+    assertEquals("Dawit Bekele", vm.uiState.value.userProfile.name)
+    assertEquals(150, vm.uiState.value.userProfile.balanceEtb)
     assertEquals("0911223344", vm.getRememberedPhone())
 
+    // Duplicate registration for same phone rejected
+    vm.logout()
+    assertFalse(vm.uiState.value.isLoggedIn)
+    assertFalse(
+      vm.createAccountWithPhonePin(
+        fullName = "Dawit Two",
+        phone = "+251911223344",
+        city = "Hawassa",
+        pin = "9999",
+        promoCode = ""
+      )
+    )
+
     // Wrong PIN rejected
-    assertFalse(vm.prepareLoginWithPhonePin("+251911223344", "9999", rememberMe = true))
+    assertFalse(vm.loginWithPhonePin("+251911223344", "9999", rememberMe = true))
+    assertFalse(vm.uiState.value.isLoggedIn)
     assertTrue(vm.uiState.value.authError?.contains("Incorrect") == true)
 
-    // Matching PIN accepted with rememberMe = false clears remembered phone & flag
-    assertTrue(vm.prepareLoginWithPhonePin("+251911223344", "4567", rememberMe = false))
+    // Matching PIN logs in directly with rememberMe = false (clears remembered phone & flag)
+    assertTrue(vm.loginWithPhonePin("+251911223344", "4567", rememberMe = false))
+    assertTrue(vm.uiState.value.isLoggedIn)
+    assertEquals(150, vm.uiState.value.userProfile.balanceEtb)
     assertEquals("", vm.getRememberedPhone())
     assertFalse(vm.isRememberMeDefault())
 
-    // Reset PIN updates stored hash
+    // Reset PIN updates stored hash and allows logging in with new PIN
+    vm.logout()
     val resetErr = vm.resetSecurityPin("0911223344", "8899")
     assertEquals(null, resetErr)
-    assertTrue(vm.prepareLoginWithPhonePin("+251911223344", "8899", rememberMe = true))
+    assertTrue(vm.loginWithPhonePin("+251911223344", "8899", rememberMe = true))
+    assertTrue(vm.uiState.value.isLoggedIn)
     assertTrue(vm.isRememberMeDefault())
 
     // prepareDirectGoogleSignIn clears stale authError

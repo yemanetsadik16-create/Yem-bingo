@@ -32,6 +32,7 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CheckboxDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.OutlinedTextField
@@ -427,6 +428,10 @@ fun AuthScreen(
                     }
                 }
 
+                Spacer(modifier = Modifier.height(14.dp))
+
+                OrDivider()
+
                 Spacer(modifier = Modifier.height(12.dp))
 
                 GoogleSignInOutlineButton(
@@ -650,6 +655,10 @@ fun AuthScreen(
                     }
                 }
 
+                Spacer(modifier = Modifier.height(14.dp))
+
+                OrDivider()
+
                 Spacer(modifier = Modifier.height(12.dp))
 
                 GoogleSignInOutlineButton(
@@ -790,5 +799,30 @@ private fun GoogleSignInOutlineButton(
                 color = Color(0xFF1F1F1F)
             )
         }
+    }
+}
+
+@Composable
+private fun OrDivider() {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        HorizontalDivider(
+            modifier = Modifier.weight(1f),
+            color = BorderColor
+        )
+        Text(
+            text = "  OR SIGN IN WITH GOOGLE  ",
+            fontFamily = PlusJakartaFontFamily,
+            color = TextSecondary,
+            fontSize = 10.sp,
+            fontWeight = FontWeight.Bold,
+            letterSpacing = 0.6.sp
+        )
+        HorizontalDivider(
+            modifier = Modifier.weight(1f),
+            color = BorderColor
+        )
     }
 }

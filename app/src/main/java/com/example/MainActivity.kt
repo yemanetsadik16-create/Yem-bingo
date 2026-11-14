@@ -75,9 +75,9 @@ fun YemBingoApp(
     val context = LocalContext.current
     val credentialManager = remember { CredentialManager.create(context) }
 
-    // Attempt Silent Auto-Sign-In on Launch only when Remember Me is enabled
+    // Attempt Silent Auto-Sign-In on Launch only when Remember Me is enabled and not already logged in
     LaunchedEffect(Unit) {
-        if (viewModel.isRememberMeDefault()) {
+        if (viewModel.isRememberMeDefault() && !uiState.isLoggedIn && !viewModel.hasActiveLocalPhoneSession()) {
             AuthManager.attemptAutoSignIn(
                 context = context,
                 credentialManager = credentialManager,
@@ -152,17 +152,10 @@ fun YemBingoApp(
                                 viewModel.setAuthError(err)
                             },
                             onAuthCancelled = {
-                                viewModel.setAuthError("Google Sign-In was dismissed. Select a Google account to enter the live lobby.")
+                                viewModel.setAuthError("Google Sign-In was dismissed.")
                             },
                             scope = scope
                         )
-                    }
-                    val launchOrContinueSignIn = {
-                        if (AuthManager.hasCurrentUser(context)) {
-                            viewModel.handleGoogleSignInSuccess()
-                        } else {
-                            launchGoogleSignIn()
-                        }
                     }
                     AuthScreen(
                         initialPhone = remember { viewModel.getRememberedPhone() },
@@ -170,14 +163,10 @@ fun YemBingoApp(
                         isSigningIn = uiState.isSigningIn,
                         authError = uiState.authError,
                         onLoginSubmit = { phone, pin, rememberMe ->
-                            if (viewModel.prepareLoginWithPhonePin(phone, pin, rememberMe)) {
-                                launchOrContinueSignIn()
-                            }
+                            viewModel.loginWithPhonePin(phone, pin, rememberMe)
                         },
                         onCreateAccountSubmit = { fullName, phone, city, pin, promoCode ->
-                            if (viewModel.prepareCreateAccount(fullName, phone, city, pin, promoCode)) {
-                                launchOrContinueSignIn()
-                            }
+                            viewModel.createAccountWithPhonePin(fullName, phone, city, pin, promoCode)
                         },
                         onResetPin = { phone, newPin ->
                             viewModel.resetSecurityPin(phone, newPin)

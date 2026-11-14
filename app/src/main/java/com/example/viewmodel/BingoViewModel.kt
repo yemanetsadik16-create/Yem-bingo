@@ -154,6 +154,7 @@ class BingoViewModel(application: Application) : AndroidViewModel(application) {
     private var pendingPinResetPhone: String = ""
     private var pendingPinResetHash: String = ""
 
+    private var activeLocalPhone: String? = null
     private var rawCloudPhone: String = "Google Verified"
     private var cloudPinHash: String? = null
     private var cloudPromoCode: String? = null
@@ -162,6 +163,110 @@ class BingoViewModel(application: Application) : AndroidViewModel(application) {
 
     private val authPrefs by lazy {
         getApplication<Application>().getSharedPreferences("yem_bingo_auth_prefs", android.content.Context.MODE_PRIVATE)
+    }
+
+    private fun localAccountKey(cleanPhone: String): String = "local_account_$cleanPhone"
+
+    private fun saveLocalAccountData(
+        cleanPhone: String,
+        name: String,
+        rawPhone: String,
+        city: String,
+        pinHash: String,
+        promoCode: String,
+        balanceEtb: Int,
+        gamesPlayed: Int,
+        totalWinningsEtb: Int,
+        winRatePercent: Float,
+        dailyStreakDays: Int,
+        isDailyClaimed: Boolean,
+        transactions: List<TransactionItem>
+    ) {
+        val txArray = org.json.JSONArray()
+        transactions.take(50).forEach { tx ->
+            val obj = org.json.JSONObject().apply {
+                put("id", tx.id)
+                put("title", tx.title)
+                put("amountEtb", tx.amountEtb)
+                put("isCredit", tx.isCredit)
+                put("timestampFormatted", tx.timestampFormatted)
+                put("method", tx.method)
+            }
+            txArray.put(obj)
+        }
+        val root = org.json.JSONObject().apply {
+            put("name", name)
+            put("phone", cleanPhone)
+            put("rawPhone", rawPhone)
+            put("city", city)
+            put("pinHash", pinHash)
+            put("promoCode", promoCode)
+            put("balanceEtb", balanceEtb)
+            put("gamesPlayed", gamesPlayed)
+            put("totalWinningsEtb", totalWinningsEtb)
+            put("winRatePercent", winRatePercent.toDouble())
+            put("dailyStreakDays", dailyStreakDays)
+            put("isDailyClaimed", isDailyClaimed)
+            put("transactions", txArray)
+        }
+        authPrefs.edit().putString(localAccountKey(cleanPhone), root.toString()).apply()
+    }
+
+    private fun loadLocalAccountJson(cleanPhone: String): org.json.JSONObject? {
+        val raw = authPrefs.getString(localAccountKey(cleanPhone), null) ?: return null
+        return try {
+            org.json.JSONObject(raw)
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    private fun persistActiveLocalAccount() {
+        val phone = activeLocalPhone ?: return
+        val existing = loadLocalAccountJson(phone)
+        val storedPinHash = existing?.optString("pinHash", "")?.ifBlank { null }
+            ?: authPrefs.getString("pin_hash", "") ?: ""
+        val storedRawPhone = existing?.optString("rawPhone", phone) ?: phone
+        val st = _uiState.value
+        saveLocalAccountData(
+            cleanPhone = phone,
+            name = st.userProfile.name,
+            rawPhone = storedRawPhone,
+            city = st.userProfile.location,
+            pinHash = storedPinHash,
+            promoCode = st.userProfile.promoCode,
+            balanceEtb = st.userProfile.balanceEtb,
+            gamesPlayed = st.userProfile.gamesPlayed,
+            totalWinningsEtb = st.userProfile.totalWinningsEtb,
+            winRatePercent = st.userProfile.winRatePercent,
+            dailyStreakDays = st.userProfile.dailyStreakDays,
+            isDailyClaimed = st.userProfile.isDailyClaimed,
+            transactions = st.transactions
+        )
+    }
+
+    private fun parseTransactionsFromJson(txArray: org.json.JSONArray?): List<TransactionItem> {
+        if (txArray == null) return emptyList()
+        val list = mutableListOf<TransactionItem>()
+        for (i in 0 until txArray.length()) {
+            val obj = txArray.optJSONObject(i) ?: continue
+            list.add(
+                TransactionItem(
+                    id = obj.optString("id", "tx_$i"),
+                    title = obj.optString("title", "Transaction"),
+                    amountEtb = obj.optInt("amountEtb", 0),
+                    isCredit = obj.optBoolean("isCredit", true),
+                    timestampFormatted = obj.optString("timestampFormatted", "Saved"),
+                    method = obj.optString("method", "Wallet")
+                )
+            )
+        }
+        return list
+    }
+
+    fun hasActiveLocalPhoneSession(): Boolean {
+        val active = authPrefs.getString("active_phone_session", null)
+        return !active.isNullOrBlank() && loadLocalAccountJson(active) != null
     }
 
     private fun normalizeEthiopianPhone(raw: String): String {
@@ -237,7 +342,10 @@ class BingoViewModel(application: Application) : AndroidViewModel(application) {
         _uiState.update { it.copy(authError = null) }
     }
 
-    fun prepareLoginWithPhonePin(phone: String, pin: String, rememberMe: Boolean): Boolean {
+    fun prepareLoginWithPhonePin(phone: String, pin: String, rememberMe: Boolean): Boolean =
+        loginWithPhonePin(phone, pin, rememberMe)
+
+    fun loginWithPhonePin(phone: String, pin: String, rememberMe: Boolean): Boolean {
         val cleanPhone = normalizeEthiopianPhone(phone)
         val digitsCount = cleanPhone.count { it.isDigit() }
         if (digitsCount < 9) {
@@ -248,29 +356,90 @@ class BingoViewModel(application: Application) : AndroidViewModel(application) {
             setAuthError("Please enter your 4 to 6-digit security PIN.")
             return false
         }
+
         val enteredHash = hashPin(pin)
-        val savedPhone = authPrefs.getString("registered_phone", null)
-        val savedPinHash = authPrefs.getString("pin_hash", null)
-        if (savedPhone == cleanPhone && savedPinHash != null && savedPinHash != enteredHash) {
+        val localJson = loadLocalAccountJson(cleanPhone)
+        val savedLegacyPhone = authPrefs.getString("registered_phone", null)
+        val savedLegacyPinHash = authPrefs.getString("pin_hash", null)
+
+        val expectedPinHash = when {
+            localJson != null -> localJson.optString("pinHash", "")
+            savedLegacyPhone == cleanPhone && !savedLegacyPinHash.isNullOrBlank() -> savedLegacyPinHash
+            else -> null
+        }
+
+        if (expectedPinHash == null) {
+            setAuthError("No account found for $cleanPhone. Tap CREATE ACCOUNT to register or use Sign in with Google.")
+            return false
+        }
+
+        if (expectedPinHash != enteredHash) {
             setAuthError("Incorrect security PIN for $cleanPhone. Tap Reset PIN if needed.")
             return false
         }
-        val editor = authPrefs.edit()
+
+        authPrefs.edit()
             .putBoolean("remember_me", rememberMe)
             .putString("remembered_phone", if (rememberMe) phone.trim() else "")
-        if (savedPhone == null || savedPhone == cleanPhone || savedPinHash == null) {
-            editor.putString("registered_phone", cleanPhone)
-                .putString("pin_hash", enteredHash)
-        }
-        editor.apply()
-        pendingAuthMode = PendingAuthMode.LOGIN
-        pendingPinHash = enteredHash
+            .putString("registered_phone", cleanPhone)
+            .putString("pin_hash", enteredHash)
+            .putString("active_phone_session", cleanPhone)
+            .apply()
+
+        activeLocalPhone = cleanPhone
+        pendingPreferredName = localJson?.optString("name", "Habesha Player") ?: "Habesha Player"
         pendingPreferredPhone = cleanPhone
-        _uiState.update { it.copy(authError = null) }
+        pendingPreferredCity = localJson?.optString("city", "Addis Ababa") ?: "Addis Ababa"
+        pendingPinHash = enteredHash
+
+        val loadedProfile = if (localJson != null) {
+            UserProfile(
+                name = localJson.optString("name", "Habesha Player"),
+                phoneMasked = formatDisplayPhone(cleanPhone),
+                location = localJson.optString("city", "Addis Ababa"),
+                balanceEtb = localJson.optInt("balanceEtb", 100),
+                gamesPlayed = localJson.optInt("gamesPlayed", 0),
+                totalWinningsEtb = localJson.optInt("totalWinningsEtb", 0),
+                winRatePercent = localJson.optDouble("winRatePercent", 0.0).toFloat(),
+                dailyStreakDays = localJson.optInt("dailyStreakDays", 1),
+                promoCode = localJson.optString("promoCode", "YEM-PLAYER-77").ifBlank { "YEM-PLAYER-77" },
+                isDailyClaimed = localJson.optBoolean("isDailyClaimed", false)
+            )
+        } else {
+            UserProfile(
+                name = "Habesha Player",
+                phoneMasked = formatDisplayPhone(cleanPhone),
+                location = "Addis Ababa",
+                balanceEtb = 100
+            )
+        }
+        val loadedTxs = parseTransactionsFromJson(localJson?.optJSONArray("transactions"))
+
+        soundManager.playWin()
+        _uiState.update {
+            it.copy(
+                isLoggedIn = true,
+                isSigningIn = false,
+                authError = null,
+                selectedTab = NavTab.PLAY,
+                playView = PlayView.LOBBY,
+                userProfile = loadedProfile,
+                transactions = loadedTxs,
+                notificationMessage = "Welcome back, ${loadedProfile.name}!"
+            )
+        }
         return true
     }
 
     fun prepareCreateAccount(
+        fullName: String,
+        phone: String,
+        city: String,
+        pin: String,
+        promoCode: String
+    ): Boolean = createAccountWithPhonePin(fullName, phone, city, pin, promoCode)
+
+    fun createAccountWithPhonePin(
         fullName: String,
         phone: String,
         city: String,
@@ -291,20 +460,88 @@ class BingoViewModel(application: Application) : AndroidViewModel(application) {
             setAuthError("Please set a 4 to 6-digit numeric security PIN.")
             return false
         }
+
+        if (loadLocalAccountJson(cleanPhone) != null) {
+            setAuthError("An account for $cleanPhone already exists. Please use LOG IN or Reset PIN.")
+            return false
+        }
+
         val newPinHash = hashPin(pin)
+        val chosenCity = city.trim().ifBlank { "Addis Ababa" }.take(50)
+        val cleanPromo = promoCode.trim().take(40)
+        val promoBonus = if (cleanPromo.length >= 3) 50 else 0
+        val welcomeBalance = 100 + promoBonus
+
+        val welcomeTx = TransactionItem(
+            id = "tx_welcome_${System.currentTimeMillis()}",
+            title = if (promoBonus > 0) {
+                "Welcome + Promo Bonus ($cleanPromo)"
+            } else {
+                "Welcome Registration Bonus"
+            },
+            amountEtb = welcomeBalance,
+            isCredit = true,
+            timestampFormatted = SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date()),
+            method = "WELCOME_BONUS"
+        )
+        val initialTxs = listOf(welcomeTx)
+
+        saveLocalAccountData(
+            cleanPhone = cleanPhone,
+            name = trimmedName.take(60),
+            rawPhone = phone.trim(),
+            city = chosenCity,
+            pinHash = newPinHash,
+            promoCode = cleanPromo.ifBlank { "YEM-PLAYER-77" },
+            balanceEtb = welcomeBalance,
+            gamesPlayed = 0,
+            totalWinningsEtb = 0,
+            winRatePercent = 0.0f,
+            dailyStreakDays = 1,
+            isDailyClaimed = false,
+            transactions = initialTxs
+        )
+
         authPrefs.edit()
             .putBoolean("remember_me", true)
             .putString("remembered_phone", phone.trim())
             .putString("registered_phone", cleanPhone)
             .putString("pin_hash", newPinHash)
+            .putString("active_phone_session", cleanPhone)
             .apply()
-        pendingAuthMode = PendingAuthMode.CREATE_ACCOUNT
-        pendingPreferredName = trimmedName
+
+        activeLocalPhone = cleanPhone
+        pendingPreferredName = trimmedName.take(60)
         pendingPreferredPhone = cleanPhone
-        pendingPreferredCity = city.trim()
+        pendingPreferredCity = chosenCity
         pendingPinHash = newPinHash
-        pendingPromoCode = promoCode.trim()
-        _uiState.update { it.copy(authError = null) }
+        pendingPromoCode = cleanPromo
+
+        val newUserProfile = UserProfile(
+            name = trimmedName.take(60),
+            phoneMasked = formatDisplayPhone(cleanPhone),
+            location = chosenCity,
+            balanceEtb = welcomeBalance,
+            promoCode = cleanPromo.ifBlank { "YEM-PLAYER-77" }
+        )
+
+        soundManager.playWin()
+        _uiState.update {
+            it.copy(
+                isLoggedIn = true,
+                isSigningIn = false,
+                authError = null,
+                selectedTab = NavTab.PLAY,
+                playView = PlayView.LOBBY,
+                userProfile = newUserProfile,
+                transactions = initialTxs,
+                notificationMessage = if (promoBonus > 0) {
+                    "🎉 Account created! +100 ETB Welcome + 50 ETB Promo Bonus credited!"
+                } else {
+                    "🎉 Account created! +100 ETB Welcome Bonus credited to your wallet!"
+                }
+            )
+        }
         return true
     }
 
@@ -322,6 +559,14 @@ class BingoViewModel(application: Application) : AndroidViewModel(application) {
             .putString("remembered_phone", phone.trim())
             .putString("pin_hash", newHash)
             .apply()
+
+        // Update stored per-phone account PIN hash if this phone already registered locally
+        val existingJson = loadLocalAccountJson(cleanPhone)
+        if (existingJson != null) {
+            existingJson.put("pinHash", newHash)
+            existingJson.put("rawPhone", phone.trim())
+            authPrefs.edit().putString(localAccountKey(cleanPhone), existingJson.toString()).apply()
+        }
 
         pendingPinResetPhone = cleanPhone
         pendingPinResetHash = newHash
@@ -375,8 +620,34 @@ class BingoViewModel(application: Application) : AndroidViewModel(application) {
         selectTicket(77)
         startTimers()
 
-        if (currentFirebaseUser() != null && isRememberMeDefault()) {
-            handleGoogleSignInSuccess()
+        if (isRememberMeDefault()) {
+            val activePhone = authPrefs.getString("active_phone_session", null)
+            val savedJson = if (!activePhone.isNullOrBlank()) loadLocalAccountJson(activePhone) else null
+            if (savedJson != null && currentFirebaseUser() == null) {
+                activeLocalPhone = activePhone
+                val restoredProfile = UserProfile(
+                    name = savedJson.optString("name", "Habesha Player"),
+                    phoneMasked = formatDisplayPhone(activePhone!!),
+                    location = savedJson.optString("city", "Addis Ababa"),
+                    balanceEtb = savedJson.optInt("balanceEtb", 100),
+                    gamesPlayed = savedJson.optInt("gamesPlayed", 0),
+                    totalWinningsEtb = savedJson.optInt("totalWinningsEtb", 0),
+                    winRatePercent = savedJson.optDouble("winRatePercent", 0.0).toFloat(),
+                    dailyStreakDays = savedJson.optInt("dailyStreakDays", 1),
+                    promoCode = savedJson.optString("promoCode", "YEM-PLAYER-77").ifBlank { "YEM-PLAYER-77" },
+                    isDailyClaimed = savedJson.optBoolean("isDailyClaimed", false)
+                )
+                val restoredTxs = parseTransactionsFromJson(savedJson.optJSONArray("transactions"))
+                _uiState.update {
+                    it.copy(
+                        isLoggedIn = true,
+                        userProfile = restoredProfile,
+                        transactions = restoredTxs
+                    )
+                }
+            } else if (currentFirebaseUser() != null) {
+                handleGoogleSignInSuccess()
+            }
         }
     }
 
@@ -976,18 +1247,6 @@ class BingoViewModel(application: Application) : AndroidViewModel(application) {
         val repo = repository
         val user = currentFirebaseUser()
 
-        // Require live Firebase Auth whenever Firebase is configured on device
-        if (repo != null && user == null) {
-            _uiState.update {
-                it.copy(
-                    isLoggedIn = false,
-                    authError = "Please sign in with Google to join live multiplayer rooms.",
-                    notificationMessage = "Please sign in with Google to join live multiplayer rooms."
-                )
-            }
-            return
-        }
-
         if (room.id in state.joinedRoomIds) {
             soundManager.playButtonTap()
             _uiState.update {
@@ -1056,6 +1315,7 @@ class BingoViewModel(application: Application) : AndroidViewModel(application) {
                 notificationMessage = "✓ Joined ${room.name}! ($newJoinedCount joined • Auto-starts after 3-min countdown with 2+ players)"
             )
         }
+        persistActiveLocalAccount()
 
         if (user != null && repo != null) {
             viewModelScope.launch {
@@ -1174,6 +1434,7 @@ class BingoViewModel(application: Application) : AndroidViewModel(application) {
                 notificationMessage = "Left ${room.name}. ${room.stakeEtb} ETB refunded to wallet."
             )
         }
+        persistActiveLocalAccount()
 
         val user = currentFirebaseUser()
         val repo = repository
@@ -1253,6 +1514,7 @@ class BingoViewModel(application: Application) : AndroidViewModel(application) {
                 winCelebration = null
             )
         }
+        persistActiveLocalAccount()
 
         soundManager.playRoundStart()
 
@@ -1665,6 +1927,7 @@ class BingoViewModel(application: Application) : AndroidViewModel(application) {
                     )
                 )
             }
+            persistActiveLocalAccount()
         }
     }
 
@@ -1726,6 +1989,7 @@ class BingoViewModel(application: Application) : AndroidViewModel(application) {
                 notificationMessage = "Credited +$amount ETB via ${method.displayName} (To: Yemane • 0939383425)!"
             )
         }
+        persistActiveLocalAccount()
         val user = currentFirebaseUser()
         val repo = repository
         if (user != null && repo != null) {
@@ -1779,6 +2043,7 @@ class BingoViewModel(application: Application) : AndroidViewModel(application) {
                 notificationMessage = "Cashout of $amount ETB sent to ${method.displayName} ($phoneNumber) successfully!"
             )
         }
+        persistActiveLocalAccount()
         val user = currentFirebaseUser()
         val repo = repository
         if (user != null && repo != null) {
@@ -1835,6 +2100,7 @@ class BingoViewModel(application: Application) : AndroidViewModel(application) {
                 notificationMessage = "Daily bonus +$bonus ETB claimed! Streak: ${newProfile.dailyStreakDays} days 🔥"
             )
         }
+        persistActiveLocalAccount()
         val user = currentFirebaseUser()
         val repo = repository
         if (user != null && repo != null) {
@@ -2177,6 +2443,8 @@ class BingoViewModel(application: Application) : AndroidViewModel(application) {
         pendingPreferredPhone = ""
         pendingPreferredCity = ""
         pendingPromoCode = ""
+        activeLocalPhone = null
+        authPrefs.edit().remove("active_phone_session").apply()
         try {
             if (AuthManager.isFirebaseInitialized(getApplication())) {
                 Firebase.auth.signOut()
