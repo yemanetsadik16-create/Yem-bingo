@@ -21,6 +21,9 @@ android {
     versionName = "1.0"
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+    if (!file("google-services.json").exists()) {
+      resValue("string", "default_web_client_id", "")
+    }
   }
 
   // Do not remove or modify these signingConfigs. They are necessary for building, installing,

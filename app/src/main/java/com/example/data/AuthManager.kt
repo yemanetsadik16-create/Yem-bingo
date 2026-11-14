@@ -76,6 +76,11 @@ object AuthManager {
             onUnauthenticated()
             return
         }
+        if (clientId.isBlank()) {
+            Log.w(TAG, "default_web_client_id is blank; skipping auto sign-in.")
+            onUnauthenticated()
+            return
+        }
 
         val googleIdOption = GetGoogleIdOption.Builder()
             .setFilterByAuthorizedAccounts(true)
@@ -122,6 +127,10 @@ object AuthManager {
             context.getString(R.string.default_web_client_id)
         } catch (e: Exception) {
             onAuthError("Google Sign-In configuration missing: default_web_client_id not found.")
+            return
+        }
+        if (clientId.isBlank()) {
+            onAuthError("Google Sign-In requires google-services.json (default_web_client_id is empty).")
             return
         }
 
